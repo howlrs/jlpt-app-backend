@@ -1,5 +1,4 @@
 use axum::{
-    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -60,7 +59,7 @@ pub struct QueryParams {
 /// - **内容**: リソースが存在しない場合のエラーメッセージ
 ///
 /// ## 例
-/// PSOT /api/evalute/good?parent_id=1&child_id=1
+/// POST /api/evalute/good?parent_id=1&child_id=1
 ///
 /// ## 関連エンドポイント
 /// - `get`: 評価取得エンドポイント
