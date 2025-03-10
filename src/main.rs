@@ -31,6 +31,8 @@ async fn main() {
     let db = common::database::Database::new().await;
 
     let endpoint = Router::new()
+        // サーバー時間を返すエンドポイント
+        .route("/api/health", get(initial::health))
         .route(
             // レベル及びカテゴリ一の取得エンドポイント
             "/api/meta",
