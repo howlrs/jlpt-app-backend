@@ -18,4 +18,5 @@ pub struct CatValue {
     pub level_id: u32,
     pub id: u32,
     pub name: String,
+    pub reten: Option<u32>,
 }
