@@ -1,5 +1,4 @@
 use axum::{
-    Json,
     extract::{Path, Query, State},
     http::StatusCode,
     response::IntoResponse,
@@ -9,13 +8,9 @@ use log::info;
 use serde::Deserialize;
 use serde_json::json;
 
-use rand::prelude::SliceRandom;
 use tokio_stream::StreamExt;
 
-use crate::{
-    api::utils::response_handler,
-    models::{self, question::Question},
-};
+use crate::{api::utils::response_handler, models::question::Question};
 
 #[derive(Deserialize)]
 pub struct PathParams {
