@@ -29,7 +29,19 @@ use super::utils::response_handler;
 /// - `health`: サーバーの状態を表す文字列
 /// - `server_time`: サーバーの現在時刻（RFC 3339形式）
 ///
-pub async fn health() -> impl IntoResponse {
+pub async fn public_health() -> impl IntoResponse {
+    response_handler(
+        StatusCode::OK,
+        "success".to_string(),
+        Some(json!({
+            "health": "ok",
+        })),
+        None,
+    )
+}
+
+/// Path: src/api/initial.rs
+pub async fn private_health(_claim: crate::models::claim::Claims) -> impl IntoResponse {
     response_handler(
         StatusCode::OK,
         "success".to_string(),

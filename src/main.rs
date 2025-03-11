@@ -31,7 +31,8 @@ async fn main() {
 
     let endpoint = Router::new()
         // サーバー時間を返すエンドポイント
-        .route("/api/health", get(api::initial::health))
+        .route("/api/public/health", get(api::initial::public_health))
+        .route("/api/private/health", get(api::initial::private_health))
         .route(
             // レベル及びカテゴリ一の取得エンドポイン
             "/api/meta",
@@ -63,7 +64,10 @@ async fn main() {
                 ])
                 .allow_origin(origin)
                 // JSON でのリクエストを許可
-                .allow_headers(["Content-Type".parse().unwrap()]),
+                .allow_headers([
+                    "Content-Type".parse().unwrap(),
+                    "Authorization".parse().unwrap(),
+                ]),
         )
         .with_state(db);
 
