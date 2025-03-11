@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
 use serde_json::json;
@@ -46,7 +48,7 @@ use crate::{
 ///
 /// ## 関連エンドポイント
 /// - `create`: カテゴリ作成エンドポイント
-pub async fn get(State(db): State<crate::common::database::Database>) -> impl IntoResponse {
+pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> impl IntoResponse {
     let levels = db
         .read_all::<Value>("levels", None)
         .await

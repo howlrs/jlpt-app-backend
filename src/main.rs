@@ -1,13 +1,12 @@
+use std::sync::Arc;
+
 use axum::{
     Router,
     http::Method,
     routing::{get, post},
 };
 use log::info;
-use std::sync::Arc;
 use tower_http::cors::CorsLayer;
-
-use crate::api::{category, evaluate, initial, meta, question};
 
 mod api;
 mod common;
@@ -28,15 +27,15 @@ async fn main() {
             .unwrap(),
     ];
 
-    let db = common::database::Database::new().await;
+    let db = Arc::new(common::database::Database::new().await);
 
     let endpoint = Router::new()
         // サーバー時間を返すエンドポイント
-        .route("/api/health", get(initial::health))
+        .route("/api/health", get(api::initial::health))
         .route(
-            // レベル及びカテゴリ一の取得エンドポイント
+            // レベル及びカテゴリ一の取得エンドポイン
             "/api/meta",
-            get(meta::get),
+            get(api::meta::get),
         )
         .route(
             // 問題取得エンドポイント
@@ -44,13 +43,15 @@ async fn main() {
             // 複合インデックスを利用しているため、レベル・カテゴリの組み合わせが存在しない場合は空配列を返す
             // カテゴリ内問題をランダムで取得
             "/api/level/{level_id}/categories/{category_id}/questions",
-            get(question::get),
+            get(api::question::get),
         )
         .route(
             // 問題に対する評価
             "/api/evaluate/{vote}",
-            get(evaluate::vote),
+            get(api::evaluate::vote),
         )
+        .route("/api/signup", post(api::user::signup))
+        .route("/api/signin", post(api::user::signin))
         .layer(
             CorsLayer::new()
                 .allow_methods([

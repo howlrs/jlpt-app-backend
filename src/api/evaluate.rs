@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -66,7 +68,7 @@ pub struct QueryParams {
 pub async fn vote(
     Path(path_params): Path<PathParams>,
     Query(query_params): Query<QueryParams>,
-    State(db): State<crate::common::database::Database>,
+    State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
     // 対象となるQuestionのSubQuestionIDが評価対象
     info!(

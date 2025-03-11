@@ -5,4 +5,5 @@ pub mod hint;
 pub mod initial;
 pub mod meta;
 pub mod question;
+pub mod user;
 pub mod utils;

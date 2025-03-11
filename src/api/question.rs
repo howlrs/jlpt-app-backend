@@ -1,3 +1,5 @@
+use std::sync::Arc;
+
 use axum::{
     extract::{Path, Query, State},
     http::StatusCode,
@@ -66,7 +68,7 @@ pub struct QueryParams {
 pub async fn get(
     Path(path_params): Path<PathParams>,
     Query(query_params): Query<QueryParams>,
-    State(db): State<crate::common::database::Database>,
+    State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
     // level_idを受けて、そのレベルに紐づくカテゴリー群を取得する
     info!(
@@ -83,7 +85,7 @@ pub async fn get(
 
     // レスポンスを返す
     // [TODO] 現状DESCENDINGで取得しているためいつも同じ問題が出力される
-    let mut questions = read_db(&path_params, db).await;
+    let mut questions = read_db(&path_params, db.clone()).await;
     if questions.is_empty() {
         return response_handler(
             StatusCode::NOT_FOUND,
@@ -131,7 +133,10 @@ pub async fn get(
     )
 }
 
-async fn read_db(path_params: &PathParams, db: crate::common::database::Database) -> Vec<Question> {
+async fn read_db(
+    path_params: &PathParams,
+    db: Arc<crate::common::database::Database>,
+) -> Vec<Question> {
     match db
         .client
         .fluent()
