@@ -11,3 +11,16 @@
 ```sh
 $ gcloud run deploy backend --source .
 ```
+
+
+## [TODO] FEATURES
+- レベル・カテゴリを入力（選択）すると問題を生成する
+  - 作問エンドポイント
+  - Gemini作問（Functions）
+  - 型にバインド
+  - 返す
+  - DB保存
+- Activityなどのユーザ情報の保存
+  - 国・言語、最後のログイン、回答履歴、
+  - データテーブルまたはグラフ化
+  - 適宜広告
