@@ -22,10 +22,10 @@ use serde_json::json;
 // Axum examples/jwt 実装を踏襲
 // https://github.com/tokio-rs/axum/blob/main/examples/jwt/src/main.rs
 
-static KEYS: LazyLock<Keys> = LazyLock::new(|| {
-    let secret = std::env::var("JWT_SECRET").expect("JWT_SECRET must be set");
-    Keys::new(secret.as_bytes())
-});
+static JWT_SECRET: LazyLock<String> =
+    LazyLock::new(|| std::env::var("JWT_SECRET").expect("JWT_SECRET must be set"));
+
+static KEYS: LazyLock<Keys> = LazyLock::new(|| Keys::new(JWT_SECRET.as_bytes()));
 
 pub enum AuthError {
     InvalidToken,
@@ -92,6 +92,24 @@ impl Display for Claims {
     }
 }
 
+// BearerトークンからClaimsを抽出する関数
+pub async fn extract_bearer_token(
+    TypedHeader(Authorization(bearer)): TypedHeader<Authorization<Bearer>>,
+) -> Result<Claims, AuthError> {
+    validate_jwt(bearer.token()).map_err(|_| AuthError::InvalidToken)
+}
+
+// JWTトークン検証関数
+fn validate_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
+    let token_data = decode::<Claims>(
+        token,
+        &DecodingKey::from_secret(JWT_SECRET.as_bytes()),
+        &Validation::default(),
+    )?;
+
+    Ok(token_data.claims)
+}
+
 // Axum Extract
 impl<S> FromRequestParts<S> for Claims
 where
@@ -105,10 +123,10 @@ where
             .await
             .map_err(|_| AuthError::InvalidToken)?;
         // Decode the user data
-        let token_data = decode::<Claims>(bearer.token(), &KEYS.decoding, &Validation::default())
-            .map_err(|_| AuthError::InvalidToken)?;
-
-        Ok(token_data.claims)
+        match validate_jwt(bearer.token()) {
+            Ok(claims) => Ok(claims),
+            Err(_) => Err(AuthError::InvalidToken),
+        }
     }
 }
 
