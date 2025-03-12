@@ -6,8 +6,9 @@ use axum::{
     response::IntoResponse,
 };
 
-use log::{error, info};
+use log::error;
 use serde_json::{self, json};
+use uuid::Uuid;
 
 use crate::{
     api::utils::response_handler,
@@ -18,8 +19,16 @@ pub async fn signup(
     State(db): State<Arc<crate::common::database::Database>>,
     Json(v): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let mut user = match serde_json::from_value::<crate::models::user::User>(v) {
-        Ok(user) => user,
+    let user = match serde_json::from_value::<crate::models::user::User>(v) {
+        Ok(mut user) => {
+            // パスワードのハッシュ化
+            // 登録日ソート可能なUUIDを生成
+            // Userに紐づくデータのキーに使用する
+            user.id = Uuid::now_v7().to_string();
+            user.password = hash_password(user.password.as_str());
+            user.created_at = Some(chrono::Utc::now());
+            user
+        }
         Err(e) => {
             error!("serde_json::from_value error: {:?}", e);
             return response_handler(
@@ -30,9 +39,6 @@ pub async fn signup(
             );
         }
     };
-    // パスワードのハッシュ化
-    user.password = hash_password(user.password.as_str());
-    let user = user;
 
     // ユーザー情報をDBに登録
     let key = user.email.clone();
@@ -57,7 +63,7 @@ pub async fn signin(
     State(db): State<Arc<crate::common::database::Database>>,
     Json(v): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let user = match serde_json::from_value::<crate::models::user::User>(v) {
+    let mut user = match serde_json::from_value::<crate::models::user::User>(v) {
         Ok(user) => user,
         Err(e) => {
             error!("serde_json::from_value error: {:?}", e);
@@ -97,6 +103,9 @@ pub async fn signin(
                 Some("wrong password".to_string()),
             );
         }
+
+        // データベースの値を代入
+        user.merge_with(db_user);
     } else {
         error!("not found user");
         return response_handler(
@@ -108,7 +117,7 @@ pub async fn signin(
     }
 
     // クレーム発行
-    let claims = crate::models::claim::Claims::new(user.user_id, user.email);
+    let claims = crate::models::claim::Claims::new(user.user_id.clone(), user.email.clone());
 
     let to_token = match claims.to_token() {
         Ok(token) => token,
@@ -129,6 +138,7 @@ pub async fn signin(
         Some(json!({
             "token": to_token,
             "token_type": "bearer",
+            "user": json!(user),
         })),
         None,
     )
