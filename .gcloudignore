@@ -1,2 +1,4 @@
 .env.local
 /target/
+
+success_*.json
