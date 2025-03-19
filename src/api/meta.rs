@@ -49,10 +49,13 @@ use crate::{
 /// ## 関連エンドポイント
 /// - `create`: カテゴリ作成エンドポイント
 pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> impl IntoResponse {
-    let levels = db
+    let mut levels = db
         .read_all::<Value>("levels", None)
         .await
         .unwrap_or_default();
+
+    // sort by id
+    levels.sort_by_key(|level| level.id);
 
     let mut categories = db
         .read_all::<CatValue>("categories", None)
@@ -126,7 +129,7 @@ mod tests {
 
         // CatValuesを取得
         let categories = db
-            .read_all::<CatValue>("categories_meta", None)
+            .read_all::<CatValue>("categories_raw", None)
             .await
             .unwrap_or_default();
 
