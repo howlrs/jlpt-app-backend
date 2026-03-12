@@ -99,4 +99,6 @@ pub struct SubQuestion {
     pub prerequisites: Option<String>,
     pub select_answer: Vec<SelectAnswer>,
     pub answer: String,
+    #[serde(default)]
+    pub voted: Option<i32>,
 }

@@ -78,13 +78,7 @@ pub async fn get(
         query_params.limit.unwrap_or_default()
     );
 
-    // [TODO] ランダムで問題を返す方法を決めかねている
-    // 案1: v4であるドキュメントIDに対して比較で取得
-    // 案2: レベル・カテゴリ指定のため、1000前後の取得になる。それを指定配列長でランダムに取得
-    // 案3: 0<1でランダムな浮動小数点を持つフィールドを追加し、複合インデックスを作成し、乱数で範囲を取得する
-
-    // レスポンスを返す
-    // [TODO] 現状DESCENDINGで取得しているためいつも同じ問題が出力される
+    // 全問題を取得し、limitが指定されていればシャッフルして指定数だけ返す（案2を採用）
     let mut questions = read_db(&path_params, db.clone()).await;
     if questions.is_empty() {
         return response_handler(

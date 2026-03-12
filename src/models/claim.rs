@@ -57,7 +57,7 @@ pub struct Claims {
 
 impl Claims {
     pub fn new(user_id: String, email: String) -> Self {
-        let after72h = chrono::Utc::now().timestamp() + 60 * 60 * 72 * 10;
+        let after72h = chrono::Utc::now().timestamp() + 60 * 60 * 72;
         Self {
             user_id,
             email,
