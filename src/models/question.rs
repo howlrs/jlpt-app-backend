@@ -17,6 +17,10 @@ pub struct Question {
     pub sentence: String,
     pub prerequisites: Option<String>,
     pub sub_questions: Vec<SubQuestion>,
+
+    /// 生成に使用したAIモデル名（品質追跡用）
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub generated_by: Option<String>,
 }
 
 // QuestionのDeserializeトレイトの実装を拡張
@@ -42,6 +46,8 @@ impl<'de> Deserialize<'de> for Question {
             prerequisites: Option<String>,
             #[serde(default)]
             sub_questions: Vec<SubQuestion>,
+            #[serde(default)]
+            generated_by: Option<String>,
         }
 
         #[derive(Deserialize)]
@@ -68,6 +74,7 @@ impl<'de> Deserialize<'de> for Question {
             sentence: helper.sentence,
             prerequisites: helper.prerequisites,
             sub_questions: helper.sub_questions,
+            generated_by: helper.generated_by,
         })
     }
 }
