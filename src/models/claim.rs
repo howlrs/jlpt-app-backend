@@ -144,26 +144,24 @@ impl Keys {
     }
 }
 
-// パスワード文字列のHash化
-pub fn hash_password(password: &str) -> String {
+/// パスワード文字列のHash化
+pub fn hash_password(password: &str) -> Result<String, String> {
     let salt = SaltString::generate(&mut OsRng);
     let argon = Argon2::default();
-    match argon.hash_password(password.as_bytes(), &salt) {
-        Ok(hash) => hash.to_string(),
-        Err(_) => panic!("Failed to hash password"),
-    }
+    argon
+        .hash_password(password.as_bytes(), &salt)
+        .map(|hash| hash.to_string())
+        .map_err(|e| format!("パスワードハッシュ化失敗: {}", e))
 }
 
-// パスワード文字列の検証
-pub fn verify_password(hashed_password: &str, password: &str) -> bool {
-    let parsed_hash = match argon2::PasswordHash::new(hashed_password) {
-        Ok(hash) => hash,
-        Err(_) => panic!("Failed to parse hash"),
-    };
+/// パスワード文字列の検証
+pub fn verify_password(hashed_password: &str, password: &str) -> Result<bool, String> {
+    let parsed_hash = argon2::PasswordHash::new(hashed_password)
+        .map_err(|e| format!("ハッシュパース失敗: {}", e))?;
     let argon = Argon2::default();
-    argon
+    Ok(argon
         .verify_password(password.as_bytes(), &parsed_hash)
-        .is_ok()
+        .is_ok())
 }
 
 #[cfg(test)]
@@ -175,8 +173,8 @@ mod tests {
     #[test]
     fn test_token() {
         let password = "password";
-        let hashed_password = hash_password(password);
+        let hashed_password = hash_password(password).unwrap();
         println!("Hashed password, {} -> {}", password, hashed_password);
-        assert!(verify_password(&hashed_password, password));
+        assert!(verify_password(&hashed_password, password).unwrap());
     }
 }

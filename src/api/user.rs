@@ -25,7 +25,18 @@ pub async fn signup(
             // 登録日ソート可能なUUIDを生成
             // Userに紐づくデータのキーに使用する
             user.id = Uuid::now_v7().to_string();
-            user.password = hash_password(user.password.as_str());
+            user.password = match hash_password(user.password.as_str()) {
+                Ok(hashed) => hashed,
+                Err(e) => {
+                    error!("パスワードハッシュ化エラー: {}", e);
+                    return response_handler(
+                        StatusCode::INTERNAL_SERVER_ERROR,
+                        "error".to_string(),
+                        None,
+                        Some(e),
+                    );
+                }
+            };
             user.created_at = Some(chrono::Utc::now());
             user
         }
@@ -95,13 +106,25 @@ pub async fn signin(
     };
     // - パスワードの検証
     if let Some(db_user) = result.clone() {
-        if !verify_password(&db_user.password, &user.password) {
-            return response_handler(
-                StatusCode::UNAUTHORIZED,
-                "error".to_string(),
-                None,
-                Some("wrong password".to_string()),
-            );
+        match verify_password(&db_user.password, &user.password) {
+            Ok(true) => {}
+            Ok(false) => {
+                return response_handler(
+                    StatusCode::UNAUTHORIZED,
+                    "error".to_string(),
+                    None,
+                    Some("wrong password".to_string()),
+                );
+            }
+            Err(e) => {
+                error!("パスワード検証エラー: {}", e);
+                return response_handler(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error".to_string(),
+                    None,
+                    Some(e),
+                );
+            }
         }
 
         // データベースの値を代入

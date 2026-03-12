@@ -11,12 +11,12 @@ use serde_json::json;
 
 use crate::{api::utils::response_handler, models::evaluate::Vote};
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 pub struct PathParams {
     vote: String,
 }
 
-#[derive(Clone, Deserialize)]
+#[derive(Deserialize)]
 pub struct QueryParams {
     parent_id: Option<String>,
     child_id: Option<String>,
@@ -70,21 +70,21 @@ pub async fn vote(
     Query(query_params): Query<QueryParams>,
     State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
-    // 対象となるQuestionのSubQuestionIDが評価対象
+    let parent_id = query_params.parent_id.as_deref().unwrap_or_default();
+    let child_id = query_params.child_id.as_deref().unwrap_or_default();
+
     info!(
-        "vote: {},  parent id: {}, child id: {}",
-        path_params.vote,
-        query_params.clone().parent_id.unwrap_or_default(),
-        query_params.clone().child_id.unwrap_or_default(),
+        "vote: {}, parent_id: {}, child_id: {}",
+        path_params.vote, parent_id, child_id
     );
 
-    // save to database
     let vote = Vote::new(
-        path_params.clone().vote,
+        path_params.vote.clone(),
         Some("questions".to_string()),
-        query_params.clone().parent_id.unwrap_or_default(),
-        query_params.clone().child_id.unwrap_or_default(),
+        parent_id.to_string(),
+        child_id.to_string(),
     );
+
     match db
         .client
         .fluent()
@@ -99,9 +99,9 @@ pub async fn vote(
             StatusCode::OK,
             "success".to_string(),
             Some(json!({
-                "vote": path_params.vote,
-                "parent_id": query_params.parent_id.unwrap_or_default(),
-                "child_id": query_params.child_id.unwrap_or_default(),
+                "vote": &path_params.vote,
+                "parent_id": parent_id,
+                "child_id": child_id,
             })),
             None,
         ),

@@ -5,7 +5,7 @@ use axum::{
     http::Method,
     routing::{get, post},
 };
-use log::info;
+use log::{error, info};
 use tower_http::cors::CorsLayer;
 
 mod api;
@@ -20,37 +20,27 @@ async fn main() {
     };
     env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
 
-    let origin = vec![
-        std::env::var("FRONTEND_URL")
-            .unwrap_or("https://storage.googleapis.com".to_string())
-            .parse()
-            .unwrap(),
-    ];
+    let frontend_url = std::env::var("FRONTEND_URL").unwrap_or_else(|_| {
+        error!("FRONTEND_URL未設定。デフォルト: https://jlpt.howlrs.net");
+        "https://jlpt.howlrs.net".to_string()
+    });
+
+    let origin = vec![frontend_url.parse().unwrap_or_else(|e| {
+        error!("FRONTEND_URLのパース失敗: {} - デフォルト使用", e);
+        "https://jlpt.howlrs.net".parse().unwrap()
+    })];
 
     let db = Arc::new(common::database::Database::new().await);
 
     let endpoint = Router::new()
-        // サーバー時間を返すエンドポイント
         .route("/api/public/health", get(api::initial::public_health))
         .route("/api/private/health", get(api::initial::private_health))
+        .route("/api/meta", get(api::meta::get))
         .route(
-            // レベル及びカテゴリ一の取得エンドポイン
-            "/api/meta",
-            get(api::meta::get),
-        )
-        .route(
-            // 問題取得エンドポイント
-            // レベル・カテゴリ必須
-            // 複合インデックスを利用しているため、レベル・カテゴリの組み合わせが存在しない場合は空配列を返す
-            // カテゴリ内問題をランダムで取得
             "/api/level/{level_id}/categories/{category_id}/questions",
             get(api::question::get),
         )
-        .route(
-            // 問題に対する評価
-            "/api/evaluate/{vote}",
-            get(api::evaluate::vote),
-        )
+        .route("/api/evaluate/{vote}", get(api::evaluate::vote))
         .route("/api/signup", post(api::user::signup))
         .route("/api/signin", post(api::user::signin))
         .layer(
@@ -63,7 +53,6 @@ async fn main() {
                     Method::OPTIONS,
                 ])
                 .allow_origin(origin)
-                // JSON でのリクエストを許可
                 .allow_headers([
                     "Content-Type".parse().unwrap(),
                     "Authorization".parse().unwrap(),
@@ -71,11 +60,19 @@ async fn main() {
         )
         .with_state(db);
 
-    // Access-Control-Allow-Origin: *
-
     let port = std::env::var("PORT").unwrap_or("8080".to_string());
-    let lister = tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port))
-        .await
-        .unwrap();
-    axum::serve::serve(lister, endpoint).await.unwrap();
+    info!("サーバー起動: 0.0.0.0:{}", port);
+
+    let listener = match tokio::net::TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+        Ok(l) => l,
+        Err(e) => {
+            error!("ポート{}のバインドに失敗: {}", port, e);
+            std::process::exit(1);
+        }
+    };
+
+    if let Err(e) = axum::serve::serve(listener, endpoint).await {
+        error!("サーバーエラー: {}", e);
+        std::process::exit(1);
+    }
 }

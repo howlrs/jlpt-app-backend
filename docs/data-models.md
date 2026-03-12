@@ -9,30 +9,33 @@ JLPT問題データ。
 ```rust
 struct Question {
     id: String,                    // ドキュメントID（UUID）
-    level_id: Option<u32>,         // JLPTレベル (1=N1, 2=N2, ..., 5=N5)
-    level_name: Option<String>,    // レベル表示名 ("N1"〜"N5")
+    level_id: u32,                 // JLPTレベル (1=N1, 2=N2, ..., 5=N5)
+    level_name: String,            // レベル表示名 ("N1"〜"N5")
     category_id: Option<u32>,      // カテゴリID
-    category_name: Option<String>, // カテゴリ名 ("文法", "語彙" 等)
-    chapter: Option<String>,       // 章・セクション
-    sentence: Option<String>,      // 問題文（大問）
+    category_name: String,         // カテゴリ名 ("文法", "語彙" 等)
+    sentence: String,              // 問題文（大問）
     prerequisites: Option<String>, // 前提条件・文脈
     sub_questions: Vec<SubQuestion>, // 小問リスト
 }
 
+struct SelectAnswer {
+    key: String,                   // 選択肢番号 ("1"〜"4")
+    value: String,                 // 選択肢テキスト
+}
+
 struct SubQuestion {
     id: u32,                       // 小問ID（連番）
-    hint_id: u32,                  // ヒントID
-    answer_id: u32,                // 回答ID
     sentence: Option<String>,      // 小問文
     prerequisites: Option<String>, // 前提条件
-    select_answer: Vec<HashMap<String, String>>, // 選択肢 [{key, value}]
+    select_answer: Vec<SelectAnswer>, // 選択肢（4択）
     answer: String,                // 正解 ("1"〜"4")
 }
 ```
 
 **備考:**
-- `category_id` はString/Numberの混在に対応するカスタムデシリアライザを実装
+- `category_id` はString/Numberの混在に対応するカスタムデシリアライザを実装（パース失敗時はNone）
 - Firestoreの複合インデックスで `level_id` + `category_id` の絞り込みに対応
+- 投票データは `votes` コレクションで別途管理
 
 ---
 
