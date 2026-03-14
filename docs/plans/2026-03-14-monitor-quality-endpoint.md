@@ -1,6 +1,6 @@
 # 問題品質監視エンドポイント 実装計画
 
-> **For Claude:** REQUIRED SUB-SKILL: Use superpowers:executing-plans to implement this plan task-by-task.
+> **Status: COMPLETED (2026-03-14)** — 全タスク実装済み（エンドポイント・Discord通知・スケジューラ認証・構造異常検出）
 
 **Goal:** `POST /api/admin/monitor-quality` エンドポイントを追加し、DB内問題の重複検出・削除・品質レポート返却を行う
 
