@@ -49,6 +49,10 @@ async fn main() {
             "/api/admin/questions/{id}",
             get(api::admin::question_detail).delete(api::admin::delete_question),
         )
+        .route(
+            "/api/admin/monitor-quality",
+            post(api::monitor::monitor_quality),
+        )
         .layer(
             CorsLayer::new()
                 .allow_methods([
