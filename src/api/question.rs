@@ -141,26 +141,16 @@ async fn read_db(
                 x.field(path!(Question::level_name)).eq(format!("N{}", path_params.level_id)),
             ])
         })
-        // order_byを除去（インデックス不一致の回避）
         .obj::<Question>()
-        .stream_query_with_errors()
+        .query()
         .await
     {
-        Ok(mut data) => {
+        Ok(data) => {
             let cat_filter = path_params.category_id.to_string();
-            let mut result = Vec::new();
-            while let Some(item) = data.next().await {
-                match item {
-                    Ok(item) => {
-                        // Rust側でcategory_idフィルタ（Firestoreインデックス問題の回避）
-                        if item.category_id.as_deref() == Some(cat_filter.as_str()) {
-                            result.push(item);
-                        }
-                    }
-                    Err(e) => log::error!("Question stream item error: {:?}", e),
-                }
-            }
-            result
+            info!("Firestore returned {} questions for level N{}", data.len(), path_params.level_id);
+            data.into_iter()
+                .filter(|q| q.category_id.as_deref() == Some(cat_filter.as_str()))
+                .collect()
         }
         Err(e) => {
             log::error!("Question query error: {:?}", e);
