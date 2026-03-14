@@ -21,9 +21,21 @@ pub async fn signup(
 ) -> impl IntoResponse {
     let user = match serde_json::from_value::<crate::models::user::User>(v) {
         Ok(mut user) => {
-            // パスワードのハッシュ化
-            // 登録日ソート可能なUUIDを生成
-            // Userに紐づくデータのキーに使用する
+            // 許可されたメールアドレスのみ登録可能
+            let allowed_emails = std::env::var("ADMIN_EMAILS").unwrap_or_default();
+            let is_allowed = allowed_emails
+                .split(',')
+                .map(|e| e.trim())
+                .any(|e| e == user.email);
+            if !is_allowed {
+                return response_handler(
+                    StatusCode::FORBIDDEN,
+                    "error".to_string(),
+                    None,
+                    Some("registration is not allowed".to_string()),
+                );
+            }
+
             user.id = Uuid::now_v7().to_string();
             user.password = match hash_password(user.password.as_str()) {
                 Ok(hashed) => hashed,
