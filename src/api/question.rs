@@ -138,10 +138,9 @@ async fn read_db(
         .from("questions")
         .filter(|x| {
             x.for_all([
-                // category_idはFirestoreにString型で保存されているため文字列比較
-                x.field(path!(Question::category_id))
-                    .eq(path_params.category_id.to_string()),
                 x.field(path!(Question::level_id)).eq(path_params.level_id),
+                x.field(path!(Question::category_id))
+                    .eq(Some(path_params.category_id.to_string())),
             ])
         })
         // order_byを除去（インデックス不一致の回避）
@@ -154,13 +153,13 @@ async fn read_db(
             while let Some(item) = data.next().await {
                 match item {
                     Ok(item) => result.push(item),
-                    Err(e) => eprintln!("Error: {:?}", e),
+                    Err(e) => log::error!("Question stream item error: {:?}", e),
                 }
             }
             result
         }
         Err(e) => {
-            eprintln!("Error: {:?}", e);
+            log::error!("Question query error: {:?}", e);
             vec![]
         }
     }
