@@ -108,6 +108,7 @@ pub async fn monitor_quality(
     let mut total_sub_questions = 0usize;
     let mut total_exact = 0usize;
     let mut total_similar = 0usize;
+    let mut total_malformed = 0usize;
 
     for level_id in &target_levels {
         // DB全問題取得
@@ -186,9 +187,74 @@ pub async fn monitor_quality(
 
         total_sub_questions += level_sub_count;
 
+        // 品質異常検出（空括弧、選択肢異常、正解キー不在等）
+        let mut malformed_details = Vec::new();
+        let mut malformed_ids: HashSet<String> = HashSet::new();
+
+        for q in &questions {
+            let mut issues: Vec<String> = Vec::new();
+
+            for sub_q in &q.sub_questions {
+                let sentence = sub_q.sentence.as_deref().unwrap_or("").trim();
+
+                // 空括弧チェック（（　　）, （）, （  ）等）
+                if sentence.contains("（　　）")
+                    || sentence.contains("（）")
+                    || sentence.contains("（  ）")
+                    || sentence.contains("（ ）")
+                {
+                    issues.push("空括弧".to_string());
+                }
+
+                // 選択肢数チェック
+                if sub_q.select_answer.len() != 4 {
+                    issues.push(format!("選択肢{}個", sub_q.select_answer.len()));
+                }
+
+                // 正解キー存在チェック
+                let answer_exists = sub_q
+                    .select_answer
+                    .iter()
+                    .any(|sa| sa.key == sub_q.answer);
+                if !answer_exists {
+                    issues.push("正解キー不在".to_string());
+                }
+
+                // 空の選択肢チェック
+                let empty_choices = sub_q
+                    .select_answer
+                    .iter()
+                    .filter(|sa| sa.value.trim().is_empty())
+                    .count();
+                if empty_choices > 0 {
+                    issues.push(format!("空選択肢{}個", empty_choices));
+                }
+
+                // 空のsentenceチェック
+                if sentence.is_empty() {
+                    issues.push("空問題文".to_string());
+                }
+            }
+
+            if !issues.is_empty() {
+                let unique_issues: HashSet<String> = issues.into_iter().collect();
+                malformed_details.push(json!({
+                    "question_id": q.id,
+                    "category_id": q.category_id,
+                    "category_name": q.category_name,
+                    "issues": unique_issues.into_iter().collect::<Vec<_>>(),
+                }));
+                malformed_ids.insert(q.id.clone());
+            }
+        }
+
+        total_malformed += malformed_details.len();
+
         // カテゴリ内で重複検出
         let mut duplicate_details = Vec::new();
         let mut delete_ids: HashSet<String> = HashSet::new();
+        // 品質異常のIDも削除対象に追加
+        delete_ids.extend(malformed_ids);
 
         for (_cat_id, items) in &category_groups {
             let mut seen: Vec<(usize, String)> = Vec::new();
@@ -287,9 +353,11 @@ pub async fn monitor_quality(
             "duplicates": duplicate_details.len(),
             "duplicates_exact": exact_count,
             "duplicates_similar": similar_count,
+            "malformed": malformed_details.len(),
             "answer_distribution": dist,
             "categories": categories,
             "duplicate_details": duplicate_details,
+            "malformed_details": malformed_details,
         }));
     }
 
@@ -318,8 +386,8 @@ pub async fn monitor_quality(
 
     let total_duplicates = total_exact + total_similar;
     info!(
-        "品質監視完了: questions={}, sub_questions={}, duplicates={} (exact={}, similar={}), deleted={}",
-        total_questions, total_sub_questions, total_duplicates, total_exact, total_similar, deleted_count
+        "品質監視完了: questions={}, sub_questions={}, duplicates={} (exact={}, similar={}), malformed={}, deleted={}",
+        total_questions, total_sub_questions, total_duplicates, total_exact, total_similar, total_malformed, deleted_count
     );
 
     let response_data = json!({
@@ -329,6 +397,7 @@ pub async fn monitor_quality(
             "duplicates_found": total_duplicates,
             "duplicates_exact": total_exact,
             "duplicates_similar": total_similar,
+            "malformed": total_malformed,
             "delete_targets": unique_delete.len(),
             "deleted": deleted_count,
             "executed": execute,
@@ -363,6 +432,7 @@ async fn notify_discord(data: &serde_json::Value) {
     let dups = summary["duplicates_found"].as_u64().unwrap_or(0);
     let exact = summary["duplicates_exact"].as_u64().unwrap_or(0);
     let similar = summary["duplicates_similar"].as_u64().unwrap_or(0);
+    let malformed = summary["malformed"].as_u64().unwrap_or(0);
     let deleted = summary["deleted"].as_u64().unwrap_or(0);
     let executed = summary["executed"].as_bool().unwrap_or(false);
 
@@ -374,19 +444,21 @@ async fn notify_discord(data: &serde_json::Value) {
             let q = lv["questions"].as_u64().unwrap_or(0);
             let sub = lv["sub_questions"].as_u64().unwrap_or(0);
             let dup = lv["duplicates"].as_u64().unwrap_or(0);
+            let mal = lv["malformed"].as_u64().unwrap_or(0);
             let dist = &lv["answer_distribution"];
             let d1 = dist["1"].as_str().unwrap_or("-");
             let d2 = dist["2"].as_str().unwrap_or("-");
             let d3 = dist["3"].as_str().unwrap_or("-");
             let d4 = dist["4"].as_str().unwrap_or("-");
             level_lines.push(format!(
-                "**{}** : {}問 (sub:{}) | 重複:{} | 正解分布: {}/{}/{}/{}",
-                name, q, sub, dup, d1, d2, d3, d4
+                "**{}** : {}問 (sub:{}) | 重複:{} 不良:{} | 正解: {}/{}/{}/{}",
+                name, q, sub, dup, mal, d1, d2, d3, d4
             ));
         }
     }
 
-    let status_emoji = if dups == 0 { "✅" } else if deleted > 0 { "🔧" } else { "⚠️" };
+    let total_issues = dups + malformed;
+    let status_emoji = if total_issues == 0 { "✅" } else if deleted > 0 { "🔧" } else { "⚠️" };
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC");
 
     let embed = json!({
@@ -402,6 +474,11 @@ async fn notify_discord(data: &serde_json::Value) {
                 {
                     "name": "重複検出",
                     "value": format!("{}件 (完全一致:{}, 類似:{})", dups, exact, similar),
+                    "inline": true
+                },
+                {
+                    "name": "品質異常",
+                    "value": format!("{}件 (空括弧・選択肢異常等)", malformed),
                     "inline": true
                 },
                 {
