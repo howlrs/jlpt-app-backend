@@ -30,6 +30,7 @@ static KEYS: LazyLock<Keys> = LazyLock::new(|| Keys::new(JWT_SECRET.as_bytes()))
 pub enum AuthError {
     InvalidToken,
     MissingToken,
+    Forbidden,
 }
 
 impl IntoResponse for AuthError {
@@ -37,6 +38,7 @@ impl IntoResponse for AuthError {
         let (status, message) = match self {
             AuthError::InvalidToken => (StatusCode::UNAUTHORIZED, "Invalid token"),
             AuthError::MissingToken => (StatusCode::BAD_REQUEST, "Missing token"),
+            AuthError::Forbidden => (StatusCode::FORBIDDEN, "Forbidden"),
         };
 
         let body = Json(json!({
@@ -53,15 +55,17 @@ pub struct Claims {
     pub user_id: String,
     pub email: String,
     pub exp: i64,
+    pub role: Option<String>,
 }
 
 impl Claims {
-    pub fn new(user_id: String, email: String) -> Self {
+    pub fn new(user_id: String, email: String, role: Option<String>) -> Self {
         let after72h = chrono::Utc::now().timestamp() + 60 * 60 * 72;
         Self {
             user_id,
             email,
             exp: after72h,
+            role,
         }
     }
 
@@ -126,6 +130,24 @@ where
         match validate_jwt(bearer.token()) {
             Ok(claims) => Ok(claims),
             Err(_) => Err(AuthError::InvalidToken),
+        }
+    }
+}
+
+// Admin権限を持つClaimsを抽出するExtractor
+#[derive(Debug)]
+pub struct AdminClaims(pub Claims);
+
+impl<S> FromRequestParts<S> for AdminClaims
+where
+    S: Send + Sync,
+{
+    type Rejection = AuthError;
+    async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
+        let claims = Claims::from_request_parts(parts, state).await?;
+        match &claims.role {
+            Some(role) if role == "admin" => Ok(AdminClaims(claims)),
+            _ => Err(AuthError::Forbidden),
         }
     }
 }

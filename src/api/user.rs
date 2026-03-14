@@ -139,8 +139,22 @@ pub async fn signin(
         );
     }
 
+    // Admin権限の判定
+    let role = {
+        let admin_emails = std::env::var("ADMIN_EMAILS").unwrap_or_default();
+        let is_admin = admin_emails
+            .split(',')
+            .map(|e| e.trim())
+            .any(|e| e == user.email);
+        if is_admin {
+            Some("admin".to_string())
+        } else {
+            None
+        }
+    };
+
     // クレーム発行
-    let claims = crate::models::claim::Claims::new(user.user_id.clone(), user.email.clone());
+    let claims = crate::models::claim::Claims::new(user.user_id.clone(), user.email.clone(), role);
 
     let to_token = match claims.to_token() {
         Ok(token) => token,

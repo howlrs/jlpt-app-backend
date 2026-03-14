@@ -43,6 +43,12 @@ async fn main() {
         .route("/api/evaluate/{vote}", get(api::evaluate::vote))
         .route("/api/signup", post(api::user::signup))
         .route("/api/signin", post(api::user::signin))
+        .route("/api/admin/votes/summary", get(api::admin::votes_summary))
+        .route("/api/admin/questions/bad", get(api::admin::bad_questions))
+        .route(
+            "/api/admin/questions/{id}",
+            get(api::admin::question_detail).delete(api::admin::delete_question),
+        )
         .layer(
             CorsLayer::new()
                 .allow_methods([
