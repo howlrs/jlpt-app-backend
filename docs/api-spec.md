@@ -273,6 +273,18 @@ JWTトークンの有効期限: 72時間。
 
 ---
 
+#### `GET /api/admin/coverage-stats`
+
+カテゴリ別カバレッジ統計を取得。ポジショニングマップ・ヒートマップ用データを返す。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**レスポンス:** `200 OK`
+
+**エラー:** `401 Unauthorized` / `403 Forbidden` / `500 Internal Server Error`
+
+---
+
 #### `POST /api/admin/questions/bulk-delete`
 
 問題の一括削除。
