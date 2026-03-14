@@ -45,6 +45,11 @@ async fn main() {
         .route("/api/signin", post(api::user::signin))
         .route("/api/admin/votes/summary", get(api::admin::votes_summary))
         .route("/api/admin/questions/bad", get(api::admin::bad_questions))
+        .route("/api/admin/stats", get(api::admin::stats))
+        .route(
+            "/api/admin/questions/bulk-delete",
+            post(api::admin::bulk_delete),
+        )
         .route(
             "/api/admin/questions/{id}",
             get(api::admin::question_detail).delete(api::admin::delete_question),
