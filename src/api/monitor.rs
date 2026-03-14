@@ -193,17 +193,20 @@ pub async fn monitor_quality(
 
         for q in &questions {
             let mut issues: Vec<String> = Vec::new();
+            let cat_id_num = q.category_id.as_deref().unwrap_or("0")
+                .parse::<u32>().unwrap_or(0);
 
             for sub_q in &q.sub_questions {
                 let sentence = sub_q.sentence.as_deref().unwrap_or("").trim();
 
-                // 空括弧チェック（（　　）, （）, （  ）等）
-                if sentence.contains("（　　）")
+                // 空括弧チェック — 漢字読み(2)・表記(3)のみ対象
+                // 文脈規定(4)・文法(8)等の穴埋め問題では（　　）は正常
+                let has_empty_parens = sentence.contains("（　　）")
                     || sentence.contains("（）")
                     || sentence.contains("（  ）")
-                    || sentence.contains("（ ）")
-                {
-                    issues.push("空括弧".to_string());
+                    || sentence.contains("（ ）");
+                if has_empty_parens && (cat_id_num == 2 || cat_id_num == 3) {
+                    issues.push("空括弧(読み/表記)".to_string());
                 }
 
                 // 選択肢数チェック
