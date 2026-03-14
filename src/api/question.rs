@@ -138,7 +138,7 @@ async fn read_db(
         .from("questions")
         .filter(|x| {
             x.for_all([
-                x.field(path!(Question::level_id)).eq(path_params.level_id),
+                x.field(path!(Question::level_name)).eq(format!("N{}", path_params.level_id)),
             ])
         })
         // order_byを除去（インデックス不一致の回避）
