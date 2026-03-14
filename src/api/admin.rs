@@ -394,6 +394,124 @@ pub async fn stats(
     )
 }
 
+/// GET /api/admin/coverage-stats
+/// カテゴリ別カバレッジ統計を返す
+pub async fn coverage_stats(
+    _admin: AdminClaims,
+    State(db): State<Arc<crate::common::database::Database>>,
+) -> impl IntoResponse {
+    // 全問題を取得
+    let questions: Vec<Question> = match db
+        .client
+        .fluent()
+        .list()
+        .from("questions")
+        .obj::<Question>()
+        .stream_all()
+        .await
+    {
+        Ok(stream) => stream.collect::<Vec<Question>>().await,
+        Err(e) => {
+            error!("Failed to fetch questions: {}", e);
+            return response_handler(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error".to_string(),
+                None,
+                Some(e.to_string()),
+            );
+        }
+    };
+
+    // レベル・カテゴリごとに集計
+    // key: (level_id) -> (level_name, HashMap<(category_id, category_name), (question_count, sub_question_count)>)
+    let mut level_map: HashMap<u32, (String, HashMap<(String, String), (usize, usize)>)> =
+        HashMap::new();
+    for q in &questions {
+        let entry = level_map
+            .entry(q.level_id)
+            .or_insert_with(|| (q.level_name.clone(), HashMap::new()));
+        let cat_id = q.category_id.clone().unwrap_or_default();
+        let cat = entry
+            .1
+            .entry((cat_id, q.category_name.clone()))
+            .or_insert((0, 0));
+        cat.0 += 1;
+        cat.1 += q.sub_questions.len();
+    }
+
+    // ターゲット決定関数
+    fn determine_target(category_name: &str) -> usize {
+        if category_name.contains("文法") {
+            300
+        } else if category_name.contains("読解") || category_name.contains("内容理解") {
+            200
+        } else if category_name.contains("聴解")
+            || category_name.contains("課題理解")
+            || category_name.contains("ポイント")
+            || category_name.contains("概要")
+        {
+            150
+        } else {
+            100
+        }
+    }
+
+    // レスポンス構築
+    let mut levels: Vec<serde_json::Value> = level_map
+        .into_iter()
+        .map(|(level_id, (level_name, categories))| {
+            let total_questions: usize = categories.values().map(|(q, _)| q).sum();
+
+            let mut cats: Vec<serde_json::Value> = categories
+                .into_iter()
+                .map(|((cat_id, cat_name), (question_count, sub_question_count))| {
+                    let target = determine_target(&cat_name);
+                    let coverage_pct = if target > 0 {
+                        (sub_question_count as f64 / target as f64) * 100.0
+                    } else {
+                        0.0
+                    };
+                    json!({
+                        "category_id": cat_id,
+                        "category_name": cat_name,
+                        "question_count": question_count,
+                        "sub_question_count": sub_question_count,
+                        "target": target,
+                        "coverage_pct": (coverage_pct * 10.0).round() / 10.0,
+                    })
+                })
+                .collect();
+            cats.sort_by(|a, b| {
+                a["category_id"]
+                    .as_str()
+                    .unwrap_or("")
+                    .cmp(b["category_id"].as_str().unwrap_or(""))
+            });
+
+            json!({
+                "level_id": level_id,
+                "level_name": level_name,
+                "total_questions": total_questions,
+                "categories": cats,
+            })
+        })
+        .collect();
+
+    levels.sort_by(|a, b| {
+        a["level_id"]
+            .as_u64()
+            .unwrap_or(0)
+            .cmp(&b["level_id"].as_u64().unwrap_or(0))
+    });
+
+    response_handler(
+        StatusCode::OK,
+        "success".to_string(),
+        Some(json!({ "levels": levels })),
+        None,
+    )
+}
+
 #[derive(Deserialize)]
 pub struct BulkDeleteRequest {
     ids: Vec<String>,

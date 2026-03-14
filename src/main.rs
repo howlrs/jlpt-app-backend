@@ -50,6 +50,7 @@ async fn main() {
         .route("/api/admin/votes/summary", get(api::admin::votes_summary))
         .route("/api/admin/questions/bad", get(api::admin::bad_questions))
         .route("/api/admin/stats", get(api::admin::stats))
+        .route("/api/admin/coverage-stats", get(api::admin::coverage_stats))
         .route(
             "/api/admin/questions/bulk-delete",
             post(api::admin::bulk_delete),
