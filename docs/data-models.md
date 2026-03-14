@@ -102,6 +102,31 @@ struct Vote {
 }
 ```
 
+### `user_answers` コレクション
+
+ユーザーの回答履歴データ。
+
+```rust
+struct UserAnswer {
+    user_id: String,            // ユーザーID
+    question_id: String,        // 問題ID
+    sub_question_id: u32,       // 小問ID
+    level_id: u32,              // JLPTレベル
+    category_name: String,      // カテゴリ名
+    selected_answer: String,    // ユーザーの選択した回答
+    correct_answer: String,     // 正解
+    is_correct: bool,           // 正解かどうか
+    answered_at: i64,           // 回答日時（Unixタイムスタンプ）
+}
+```
+
+**備考:**
+- ドキュメントIDは自動生成（auto_id）
+- `user_id` + `answered_at` でユーザー別の回答履歴をソート取得
+- `is_correct` フィールドで不正解のみの絞り込みが可能
+
+---
+
 ## ER図（概念）
 
 ```
@@ -112,6 +137,8 @@ questions ─────┘  (level_id + category_id で関連)
     └── sub_questions (埋め込み配列)
 
 users (独立)
+  │
+  └── user_answers (user_id で参照)
 
 votes ───── questions (parent_id で参照)
 ```

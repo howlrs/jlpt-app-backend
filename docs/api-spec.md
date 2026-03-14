@@ -125,7 +125,7 @@
 
 #### `POST /api/signup`
 
-ユーザー登録。
+ユーザー登録。全てのメールアドレスで登録可能（管理者専用ではない）。
 
 **リクエストボディ:**
 ```json
@@ -170,6 +170,77 @@ JWTトークンの有効期限: 72時間。
 
 ---
 
+### ユーザーAPI（JWT認証必須）
+
+#### `POST /api/answers`
+
+ユーザーの回答を記録する。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**リクエストボディ:**
+```json
+{
+  "question_id": "uuid",
+  "sub_question_id": 1,
+  "selected_answer": "2"
+}
+```
+
+**レスポンス:** `200 OK`
+
+**エラー:** `400 Bad Request` / `401 Unauthorized` / `500 Internal Server Error`
+
+---
+
+#### `GET /api/users/me/history?limit=50`
+
+ユーザーの回答履歴を取得。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**クエリパラメータ:**
+
+| パラメータ | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `limit` | u32 | No | 取得件数上限（デフォルト: 50） |
+
+**レスポンス:** `200 OK`
+
+**エラー:** `401 Unauthorized` / `500 Internal Server Error`
+
+---
+
+#### `GET /api/users/me/stats`
+
+ユーザーのカテゴリ別正答率統計を取得。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**レスポンス:** `200 OK`
+
+**エラー:** `401 Unauthorized` / `500 Internal Server Error`
+
+---
+
+#### `GET /api/users/me/mistakes?limit=20`
+
+ユーザーの不正解回答一覧を取得。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**クエリパラメータ:**
+
+| パラメータ | 型 | 必須 | 説明 |
+|-----------|-----|------|------|
+| `limit` | u32 | No | 取得件数上限（デフォルト: 20） |
+
+**レスポンス:** `200 OK`
+
+**エラー:** `401 Unauthorized` / `500 Internal Server Error`
+
+---
+
 ### プライベートAPI（JWT認証必須）
 
 #### `GET /api/private/health`
@@ -185,6 +256,34 @@ JWTトークンの有効期限: 72時間。
   "data": { "health": "ok", "server_time": "2025-03-06T12:00:00Z" }
 }
 ```
+
+---
+
+### 管理者API（JWT認証 + 管理者権限必須）
+
+#### `GET /api/admin/stats`
+
+管理者向け統計情報を取得。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**レスポンス:** `200 OK`
+
+**エラー:** `401 Unauthorized` / `403 Forbidden` / `500 Internal Server Error`
+
+---
+
+#### `POST /api/admin/questions/bulk-delete`
+
+問題の一括削除。
+
+**ヘッダー:** `Authorization: Bearer <token>`
+
+**レスポンス:** `200 OK`
+
+**エラー:** `401 Unauthorized` / `403 Forbidden` / `500 Internal Server Error`
+
+---
 
 ## 認証方式
 

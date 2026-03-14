@@ -16,6 +16,9 @@
 | `JWT_SECRET` | Yes | JWT署名用シークレットキー | - |
 | `FRONTEND_URL` | No | CORS許可オリジン | `https://jlpt.howlrs.net` |
 | `PORT` | No | サーバーポート | 8080 |
+| `ADMIN_EMAILS` | No | 管理者メールアドレス（カンマ区切り） | - |
+
+> **注意:** サインアップは全てのユーザーに開放されています。`ADMIN_EMAILS` は管理者ロールの制御のみに使用されます。
 
 ## ローカル開発
 
