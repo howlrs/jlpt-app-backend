@@ -322,22 +322,112 @@ pub async fn monitor_quality(
         total_questions, total_sub_questions, total_duplicates, total_exact, total_similar, deleted_count
     );
 
+    let response_data = json!({
+        "summary": {
+            "total_questions": total_questions,
+            "total_sub_questions": total_sub_questions,
+            "duplicates_found": total_duplicates,
+            "duplicates_exact": total_exact,
+            "duplicates_similar": total_similar,
+            "delete_targets": unique_delete.len(),
+            "deleted": deleted_count,
+            "executed": execute,
+        },
+        "levels": level_reports,
+    });
+
+    // Discord Webhook通知
+    notify_discord(&response_data).await;
+
     response_handler(
         StatusCode::OK,
         "success".to_string(),
-        Some(json!({
-            "summary": {
-                "total_questions": total_questions,
-                "total_sub_questions": total_sub_questions,
-                "duplicates_found": total_duplicates,
-                "duplicates_exact": total_exact,
-                "duplicates_similar": total_similar,
-                "delete_targets": unique_delete.len(),
-                "deleted": deleted_count,
-                "executed": execute,
-            },
-            "levels": level_reports,
-        })),
+        Some(response_data),
         None,
     )
+}
+
+/// Discord Webhookにレポートを送信
+async fn notify_discord(data: &serde_json::Value) {
+    let webhook_url = match std::env::var("DISCORD_WEBHOOK_URL") {
+        Ok(url) => url,
+        Err(_) => {
+            info!("DISCORD_WEBHOOK_URL未設定 - 通知スキップ");
+            return;
+        }
+    };
+
+    let summary = &data["summary"];
+    let total_q = summary["total_questions"].as_u64().unwrap_or(0);
+    let total_sub = summary["total_sub_questions"].as_u64().unwrap_or(0);
+    let dups = summary["duplicates_found"].as_u64().unwrap_or(0);
+    let exact = summary["duplicates_exact"].as_u64().unwrap_or(0);
+    let similar = summary["duplicates_similar"].as_u64().unwrap_or(0);
+    let deleted = summary["deleted"].as_u64().unwrap_or(0);
+    let executed = summary["executed"].as_bool().unwrap_or(false);
+
+    // レベル別サマリー
+    let mut level_lines = Vec::new();
+    if let Some(levels) = data["levels"].as_array() {
+        for lv in levels {
+            let name = lv["level"].as_str().unwrap_or("?");
+            let q = lv["questions"].as_u64().unwrap_or(0);
+            let sub = lv["sub_questions"].as_u64().unwrap_or(0);
+            let dup = lv["duplicates"].as_u64().unwrap_or(0);
+            let dist = &lv["answer_distribution"];
+            let d1 = dist["1"].as_str().unwrap_or("-");
+            let d2 = dist["2"].as_str().unwrap_or("-");
+            let d3 = dist["3"].as_str().unwrap_or("-");
+            let d4 = dist["4"].as_str().unwrap_or("-");
+            level_lines.push(format!(
+                "**{}** : {}問 (sub:{}) | 重複:{} | 正解分布: {}/{}/{}/{}",
+                name, q, sub, dup, d1, d2, d3, d4
+            ));
+        }
+    }
+
+    let status_emoji = if dups == 0 { "✅" } else if deleted > 0 { "🔧" } else { "⚠️" };
+    let now = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC");
+
+    let embed = json!({
+        "embeds": [{
+            "title": format!("{} JLPT品質監視レポート", status_emoji),
+            "color": if dups == 0 { 3066993 } else { 15844367 },
+            "fields": [
+                {
+                    "name": "総問題数",
+                    "value": format!("{} 問 ({} sub_questions)", total_q, total_sub),
+                    "inline": true
+                },
+                {
+                    "name": "重複検出",
+                    "value": format!("{}件 (完全一致:{}, 類似:{})", dups, exact, similar),
+                    "inline": true
+                },
+                {
+                    "name": "削除",
+                    "value": if executed {
+                        format!("{}件 削除済み", deleted)
+                    } else {
+                        "未実行 (DRY RUN)".to_string()
+                    },
+                    "inline": true
+                },
+                {
+                    "name": "レベル別",
+                    "value": level_lines.join("\n"),
+                    "inline": false
+                }
+            ],
+            "footer": {
+                "text": format!("実行時刻: {}", now)
+            }
+        }]
+    });
+
+    let client = reqwest::Client::new();
+    match client.post(&webhook_url).json(&embed).send().await {
+        Ok(res) => info!("Discord通知送信: status={}", res.status()),
+        Err(e) => warn!("Discord通知失敗: {}", e),
+    }
 }
