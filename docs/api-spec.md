@@ -71,14 +71,12 @@
       "level_name": "N3",
       "category_id": 1,
       "category_name": "文法",
-      "chapter": "",
       "sentence": "問題文",
       "prerequisites": "",
+      "generated_by": "gemini-2.0-flash",
       "sub_questions": [
         {
           "id": 1,
-          "hint_id": 0,
-          "answer_id": 0,
           "sentence": "小問文",
           "select_answer": [
             { "key": "1", "value": "選択肢A" },

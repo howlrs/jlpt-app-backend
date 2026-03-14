@@ -14,7 +14,7 @@
 |--------|------|------|-----------|
 | `PROJECT_ID` | Yes | Google Cloud プロジェクトID | - |
 | `JWT_SECRET` | Yes | JWT署名用シークレットキー | - |
-| `FRONTEND_URL` | No | CORS許可オリジン | Google Storageドメイン |
+| `FRONTEND_URL` | No | CORS許可オリジン | `https://jlpt.howlrs.net` |
 | `PORT` | No | サーバーポート | 8080 |
 
 ## ローカル開発
@@ -60,6 +60,10 @@ src/
 └── common/           # 共通モジュール
     └── database.rs   # Firestore CRUD ラッパー
 ```
+
+## 備考
+
+- パスワード関連関数（ハッシュ化・検証）は `Result` を返す設計に変更済み（パニックしない）
 
 ## Firestore インデックス
 

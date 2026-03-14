@@ -15,6 +15,7 @@ struct Question {
     category_name: String,         // カテゴリ名 ("文法", "語彙" 等)
     sentence: String,              // 問題文（大問）
     prerequisites: Option<String>, // 前提条件・文脈
+    generated_by: Option<String>,  // 生成に使用したGeminiモデル名
     sub_questions: Vec<SubQuestion>, // 小問リスト
 }
 
