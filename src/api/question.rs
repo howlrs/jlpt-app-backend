@@ -139,8 +139,6 @@ async fn read_db(
         .filter(|x| {
             x.for_all([
                 x.field(path!(Question::level_id)).eq(path_params.level_id),
-                x.field(path!(Question::category_id))
-                    .eq(Some(path_params.category_id.to_string())),
             ])
         })
         // order_byを除去（インデックス不一致の回避）
@@ -149,10 +147,16 @@ async fn read_db(
         .await
     {
         Ok(mut data) => {
+            let cat_filter = path_params.category_id.to_string();
             let mut result = Vec::new();
             while let Some(item) = data.next().await {
                 match item {
-                    Ok(item) => result.push(item),
+                    Ok(item) => {
+                        // Rust側でcategory_idフィルタ（Firestoreインデックス問題の回避）
+                        if item.category_id.as_deref() == Some(cat_filter.as_str()) {
+                            result.push(item);
+                        }
+                    }
                     Err(e) => log::error!("Question stream item error: {:?}", e),
                 }
             }
