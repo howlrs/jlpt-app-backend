@@ -2,6 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
+use axum::http::HeaderMap;
 use log::{info, warn};
 use serde::Deserialize;
 use serde_json::json;
@@ -10,7 +11,7 @@ use tokio_stream::StreamExt;
 use crate::{
     api::utils::response_handler,
     common::similarity::{normalized_similarity, DEFAULT_SIMILARITY_THRESHOLD},
-    models::{claim::AdminClaims, question::Question},
+    models::question::Question,
 };
 
 #[derive(Deserialize, Default)]
@@ -20,13 +21,60 @@ pub struct MonitorQuery {
     pub threshold: Option<f64>,
 }
 
+/// 認証チェック: AdminClaims JWT または X-Scheduler-Secret ヘッダ
+fn is_authorized(headers: &HeaderMap) -> bool {
+    // 1. X-Scheduler-Secret ヘッダによる認証
+    if let Ok(secret) = std::env::var("SCHEDULER_SECRET") {
+        if let Some(header_val) = headers.get("x-scheduler-secret") {
+            if let Ok(val) = header_val.to_str() {
+                if val == secret {
+                    return true;
+                }
+            }
+        }
+    }
+
+    // 2. JWT Bearer トークンによる認証（AdminClaims相当）
+    if let Some(auth_header) = headers.get("authorization") {
+        if let Ok(val) = auth_header.to_str() {
+            if let Some(token) = val.strip_prefix("Bearer ") {
+                if let Ok(token_data) = jsonwebtoken::decode::<crate::models::claim::Claims>(
+                    token,
+                    &jsonwebtoken::DecodingKey::from_secret(
+                        std::env::var("JWT_SECRET")
+                            .unwrap_or_default()
+                            .as_bytes(),
+                    ),
+                    &jsonwebtoken::Validation::default(),
+                ) {
+                    if token_data.claims.role.as_deref() == Some("admin") {
+                        return true;
+                    }
+                }
+            }
+        }
+    }
+
+    false
+}
+
 /// POST /api/admin/monitor-quality
 /// DB内問題の重複検出・品質レポート・削除
+///
+/// 認証: Admin JWT または X-Scheduler-Secret ヘッダ
 pub async fn monitor_quality(
-    _admin: AdminClaims,
+    headers: HeaderMap,
     axum::extract::Query(query): axum::extract::Query<MonitorQuery>,
     State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
+    if !is_authorized(&headers) {
+        return response_handler(
+            StatusCode::UNAUTHORIZED,
+            "error".to_string(),
+            None,
+            Some("認証が必要です".to_string()),
+        );
+    }
     let execute = query.execute.unwrap_or(false);
     let threshold = query.threshold.unwrap_or(DEFAULT_SIMILARITY_THRESHOLD);
     let target_levels: Vec<u32> = match &query.level {
