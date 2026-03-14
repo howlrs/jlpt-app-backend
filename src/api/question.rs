@@ -136,21 +136,17 @@ async fn read_db(
         .fluent()
         .select()
         .from("questions")
-        .filter(|x| {
-            x.for_all([
-                x.field(path!(Question::level_name)).eq(format!("N{}", path_params.level_id)),
-            ])
-        })
+        .limit(5)
         .obj::<Question>()
         .query()
         .await
     {
         Ok(data) => {
-            let cat_filter = path_params.category_id.to_string();
-            info!("Firestore returned {} questions for level N{}", data.len(), path_params.level_id);
-            data.into_iter()
-                .filter(|q| q.category_id.as_deref() == Some(cat_filter.as_str()))
-                .collect()
+            info!("Firestore returned {} questions (no filter test)", data.len());
+            for q in &data {
+                info!("  level_name={}, category_id={:?}, category_name={}", q.level_name, q.category_id, q.category_name);
+            }
+            data
         }
         Err(e) => {
             log::error!("Question query error: {:?}", e);
