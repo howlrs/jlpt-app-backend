@@ -138,14 +138,13 @@ async fn read_db(
         .from("questions")
         .filter(|x| {
             x.for_all([
-                x.field(path!(Question::level_id)).eq(path_params.level_id),
                 // category_idはFirestoreにString型で保存されているため文字列比較
                 x.field(path!(Question::category_id))
                     .eq(path_params.category_id.to_string()),
+                x.field(path!(Question::level_id)).eq(path_params.level_id),
             ])
         })
-        // .limit(200)
-        .order_by([(path!(Question::id), FirestoreQueryDirection::Descending)])
+        // order_byを除去（インデックス不一致の回避）
         .obj::<Question>()
         .stream_query_with_errors()
         .await
