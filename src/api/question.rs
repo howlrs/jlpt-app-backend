@@ -139,8 +139,9 @@ async fn read_db(
         .filter(|x| {
             x.for_all([
                 x.field(path!(Question::level_id)).eq(path_params.level_id),
+                // category_idはFirestoreにString型で保存されているため文字列比較
                 x.field(path!(Question::category_id))
-                    .eq(path_params.category_id),
+                    .eq(path_params.category_id.to_string()),
             ])
         })
         // .limit(200)

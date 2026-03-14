@@ -9,7 +9,7 @@ pub struct Question {
     #[serde(default)]
     pub level_name: String,
     #[serde(default)]
-    pub category_id: Option<u32>,
+    pub category_id: Option<String>,
     #[serde(default)]
     pub category_name: String,
 
@@ -69,7 +69,7 @@ impl<'de> Deserialize<'de> for Question {
             id: helper.id.unwrap_or_default(),
             level_id: helper.level_id,
             level_name: helper.level_name,
-            category_id: category_id.and_then(|s| s.parse::<u32>().ok()),
+            category_id,
             category_name: helper.category_name,
             sentence: helper.sentence,
             prerequisites: helper.prerequisites,
