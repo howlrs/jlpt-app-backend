@@ -32,6 +32,29 @@ pub struct UserAnswer {
     pub answered_at: i64,
 }
 
+const MAX_USER_ANSWERS: u32 = 200;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CategoryStatsEntry {
+    pub total: u32,
+    pub correct: u32,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LevelStatsEntry {
+    pub total: u32,
+    pub correct: u32,
+    pub categories: std::collections::HashMap<String, CategoryStatsEntry>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct UserStatsDoc {
+    pub user_id: String,
+    pub total_answers: u32,
+    pub total_correct: u32,
+    pub levels: std::collections::HashMap<String, LevelStatsEntry>,
+}
+
 #[derive(Debug, Deserialize)]
 pub struct RecordAnswerRequest {
     pub question_id: String,
@@ -91,41 +114,105 @@ pub async fn record_answer(
 
     let correct_answer = sub_question.answer.clone();
     let is_correct = body.selected_answer == correct_answer;
+    let level_key = format!("N{}", question.level_id);
 
-    let user_answer = UserAnswer {
-        id: Uuid::new_v4().to_string(),
-        user_id: claims.user_id.clone(),
-        question_id: body.question_id.clone(),
-        sub_question_id: body.sub_question_id,
-        level_id: question.level_id,
-        category_name: question.category_name.clone(),
-        selected_answer: body.selected_answer.clone(),
-        correct_answer,
-        is_correct,
-        answered_at: chrono::Utc::now().timestamp(),
+    // 1) Update user_stats incrementally
+    let stats_id = claims.user_id.clone();
+    let mut user_stats: UserStatsDoc = match db.read::<UserStatsDoc>("user_stats", &stats_id).await {
+        Ok(Some(s)) => s,
+        _ => UserStatsDoc {
+            user_id: claims.user_id.clone(),
+            total_answers: 0,
+            total_correct: 0,
+            levels: std::collections::HashMap::new(),
+        },
     };
+    user_stats.total_answers += 1;
+    if is_correct {
+        user_stats.total_correct += 1;
+    }
+    let level_entry = user_stats.levels.entry(level_key).or_insert_with(|| LevelStatsEntry {
+        total: 0,
+        correct: 0,
+        categories: std::collections::HashMap::new(),
+    });
+    level_entry.total += 1;
+    if is_correct {
+        level_entry.correct += 1;
+    }
+    let cat_entry = level_entry.categories.entry(question.category_name.clone()).or_insert_with(|| CategoryStatsEntry {
+        total: 0,
+        correct: 0,
+    });
+    cat_entry.total += 1;
+    if is_correct {
+        cat_entry.correct += 1;
+    }
 
-    let doc_id = user_answer.id.clone();
-    match db
-        .create::<UserAnswer>("user_answers", &doc_id, user_answer.clone())
-        .await
-    {
-        Ok(_) => response_handler(
-            StatusCode::OK,
-            "success".to_string(),
-            Some(json!(user_answer)),
-            None,
-        ),
-        Err(e) => {
-            error!("Failed to save user_answer: {}", e);
-            response_handler(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error".to_string(),
-                None,
-                Some(e),
-            )
+    if let Err(e) = db.update::<UserStatsDoc>("user_stats", &stats_id, user_stats.clone()).await {
+        // If update fails (doc doesn't exist yet), try create
+        if let Err(e2) = db.create::<UserStatsDoc>("user_stats", &stats_id, user_stats.clone()).await {
+            error!("Failed to save user_stats: {} / {}", e, e2);
         }
     }
+
+    // 2) Save to user_answers only if incorrect
+    if !is_correct {
+        let user_answer = UserAnswer {
+            id: Uuid::new_v4().to_string(),
+            user_id: claims.user_id.clone(),
+            question_id: body.question_id.clone(),
+            sub_question_id: body.sub_question_id,
+            level_id: question.level_id,
+            category_name: question.category_name.clone(),
+            selected_answer: body.selected_answer.clone(),
+            correct_answer,
+            is_correct: false,
+            answered_at: chrono::Utc::now().timestamp(),
+        };
+
+        let doc_id = user_answer.id.clone();
+        if let Err(e) = db.create::<UserAnswer>("user_answers", &doc_id, user_answer).await {
+            error!("Failed to save user_answer: {}", e);
+        }
+
+        // 3) Prune old answers if over limit
+        if let Ok(mut stream) = db
+            .client
+            .fluent()
+            .select()
+            .from("user_answers")
+            .filter(|q| {
+                q.field(path!(UserAnswer::user_id)).eq(claims.user_id.clone())
+            })
+            .order_by([(
+                path!(UserAnswer::answered_at),
+                FirestoreQueryDirection::Descending,
+            )])
+            .obj::<UserAnswer>()
+            .stream_query_with_errors()
+            .await
+        {
+            let mut all_answers = Vec::new();
+            while let Some(item) = stream.next().await {
+                if let Ok(a) = item {
+                    all_answers.push(a);
+                }
+            }
+            if all_answers.len() as u32 > MAX_USER_ANSWERS {
+                for old in &all_answers[MAX_USER_ANSWERS as usize..] {
+                    let _ = db.delete("user_answers", &old.id).await;
+                }
+            }
+        }
+    }
+
+    response_handler(
+        StatusCode::OK,
+        "success".to_string(),
+        Some(json!({ "is_correct": is_correct })),
+        None,
+    )
 }
 
 /// GET /api/users/me/history?limit=50
@@ -164,43 +251,18 @@ pub async fn history(
                 }
             }
 
-            // Batch-fetch questions to enrich history items
-            let unique_qids: Vec<String> = {
-                let mut seen = std::collections::HashSet::new();
-                answers.iter().filter_map(|a| {
-                    if seen.insert(a.question_id.clone()) {
-                        Some(a.question_id.clone())
-                    } else {
-                        None
-                    }
-                }).collect()
-            };
-
-            let mut q_map: std::collections::HashMap<String, Question> = std::collections::HashMap::new();
-            for qid in &unique_qids {
-                if let Ok(Some(q)) = db.read::<Question>("questions", qid).await {
-                    q_map.insert(qid.clone(), q);
-                }
-            }
-
             let results: Vec<serde_json::Value> = answers.iter().map(|a| {
                 let level_name = format!("N{}", a.level_id);
-                let sentence = q_map.get(&a.question_id)
-                    .map(|q| q.sentence.clone())
-                    .unwrap_or_default();
+                let level_slug = format!("n{}", a.level_id);
                 let created_at = chrono::DateTime::from_timestamp(a.answered_at, 0)
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_default();
                 json!({
                     "id": a.id,
                     "question_id": a.question_id,
-                    "sub_question_id": a.sub_question_id,
-                    "selected_answer": a.selected_answer,
-                    "correct_answer": a.correct_answer,
-                    "is_correct": a.is_correct,
                     "level_name": level_name,
+                    "level_slug": level_slug,
                     "category_name": a.category_name,
-                    "sentence": sentence,
                     "created_at": created_at,
                 })
             }).collect();
@@ -229,124 +291,90 @@ pub async fn stats(
     claims: Claims,
     State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
-    // Query all user_answers for this user
-    match db
-        .client
-        .fluent()
-        .select()
-        .from("user_answers")
-        .filter(|q| {
-            q.field(path!(UserAnswer::user_id)).eq(claims.user_id.clone())
-        })
-        .obj::<UserAnswer>()
-        .stream_query_with_errors()
-        .await
-    {
-        Ok(mut stream) => {
-            let mut answers: Vec<UserAnswer> = Vec::new();
-            while let Some(item) = stream.next().await {
-                match item {
-                    Ok(answer) => answers.push(answer),
-                    Err(e) => {
-                        error!("Error reading user_answer: {:?}", e);
-                    }
-                }
-            }
-
-            let total_answered = answers.len() as u32;
-            let total_correct = answers.iter().filter(|a| a.is_correct).count() as u32;
-            let accuracy = if total_answered > 0 {
-                total_correct as f64 / total_answered as f64
-            } else {
-                0.0
-            };
-
-            // Aggregate by level_id and category_name
-            use std::collections::BTreeMap;
-
-            struct LevelStats {
-                total: u32,
-                correct: u32,
-                categories: BTreeMap<String, (u32, u32)>, // (total, correct)
-            }
-
-            let mut levels: BTreeMap<u32, LevelStats> = BTreeMap::new();
-
-            for answer in &answers {
-                let level = levels.entry(answer.level_id).or_insert_with(|| LevelStats {
-                    total: 0,
-                    correct: 0,
-                    categories: BTreeMap::new(),
-                });
-                level.total += 1;
-                if answer.is_correct {
-                    level.correct += 1;
-                }
-                let cat = level
-                    .categories
-                    .entry(answer.category_name.clone())
-                    .or_insert((0, 0));
-                cat.0 += 1;
-                if answer.is_correct {
-                    cat.1 += 1;
-                }
-            }
-
-            let levels_json: Vec<serde_json::Value> = levels
-                .iter()
-                .map(|(level_id, stats)| {
-                    let level_name = format!("N{}", level_id);
-                    let cat_accuracy = if stats.total > 0 {
-                        stats.correct as f64 / stats.total as f64
-                    } else {
-                        0.0
-                    };
-                    let categories: Vec<serde_json::Value> = stats
-                        .categories
-                        .iter()
-                        .map(|(name, (t, c))| {
-                            let a = if *t > 0 { *c as f64 / *t as f64 } else { 0.0 };
-                            json!({
-                                "category_name": name,
-                                "total": t,
-                                "correct": c,
-                                "accuracy": a * 100.0,
-                            })
-                        })
-                        .collect();
-                    json!({
-                        "level_id": level_id,
-                        "level_name": level_name,
-                        "total": stats.total,
-                        "correct": stats.correct,
-                        "accuracy": cat_accuracy * 100.0,
-                        "categories": categories,
-                    })
-                })
-                .collect();
-
-            response_handler(
+    let user_stats: UserStatsDoc = match db.read::<UserStatsDoc>("user_stats", &claims.user_id).await {
+        Ok(Some(s)) => s,
+        Ok(None) => {
+            return response_handler(
                 StatusCode::OK,
                 "success".to_string(),
                 Some(json!({
-                    "total_answers": total_answered,
-                    "total_correct": total_correct,
-                    "overall_accuracy": accuracy * 100.0,
-                    "levels": levels_json,
+                    "total_answers": 0,
+                    "total_correct": 0,
+                    "overall_accuracy": 0.0,
+                    "levels": [],
                 })),
                 None,
-            )
+            );
         }
         Err(e) => {
-            error!("Failed to query stats: {:?}", e);
-            response_handler(
+            error!("Failed to read user_stats: {}", e);
+            return response_handler(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "error".to_string(),
                 None,
-                Some(format!("{:?}", e)),
-            )
+                Some(e),
+            );
         }
-    }
+    };
+
+    let overall_accuracy = if user_stats.total_answers > 0 {
+        user_stats.total_correct as f64 / user_stats.total_answers as f64 * 100.0
+    } else {
+        0.0
+    };
+
+    let mut levels_json: Vec<serde_json::Value> = user_stats
+        .levels
+        .iter()
+        .map(|(level_name, level)| {
+            let level_accuracy = if level.total > 0 {
+                level.correct as f64 / level.total as f64 * 100.0
+            } else {
+                0.0
+            };
+            let categories: Vec<serde_json::Value> = level
+                .categories
+                .iter()
+                .map(|(cat_name, cat)| {
+                    let cat_accuracy = if cat.total > 0 {
+                        cat.correct as f64 / cat.total as f64 * 100.0
+                    } else {
+                        0.0
+                    };
+                    json!({
+                        "category_name": cat_name,
+                        "total": cat.total,
+                        "correct": cat.correct,
+                        "accuracy": cat_accuracy,
+                    })
+                })
+                .collect();
+            json!({
+                "level_name": level_name,
+                "total": level.total,
+                "correct": level.correct,
+                "accuracy": level_accuracy,
+                "categories": categories,
+            })
+        })
+        .collect();
+
+    // Sort by level name (N1, N2, ...)
+    levels_json.sort_by(|a, b| {
+        a["level_name"].as_str().unwrap_or("").cmp(&b["level_name"].as_str().unwrap_or(""))
+    });
+
+    response_handler(
+        StatusCode::OK,
+        "success".to_string(),
+        Some(json!({
+            "total_answers": user_stats.total_answers,
+            "total_correct": user_stats.total_correct,
+            "overall_accuracy": overall_accuracy,
+            "levels": levels_json,
+        })),
+        None,
+    )
 }
 
 /// GET /api/users/me/mistakes?limit=20

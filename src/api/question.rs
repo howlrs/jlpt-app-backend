@@ -127,6 +127,33 @@ pub async fn get(
     )
 }
 
+/// GET /api/questions/{id}
+pub async fn get_by_id(
+    Path(id): Path<String>,
+    State(db): State<Arc<crate::common::database::Database>>,
+) -> impl IntoResponse {
+    match db.read::<Question>("questions", &id).await {
+        Ok(Some(q)) => response_handler(
+            StatusCode::OK,
+            "ok".to_string(),
+            Some(json!(q)),
+            None,
+        ),
+        Ok(None) => response_handler(
+            StatusCode::NOT_FOUND,
+            "Not Found".to_string(),
+            None,
+            Some("question not found".to_string()),
+        ),
+        Err(e) => response_handler(
+            StatusCode::INTERNAL_SERVER_ERROR,
+            "error".to_string(),
+            None,
+            Some(e),
+        ),
+    }
+}
+
 async fn read_db(
     path_params: &PathParams,
     db: Arc<crate::common::database::Database>,

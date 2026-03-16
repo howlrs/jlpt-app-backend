@@ -40,6 +40,7 @@ async fn main() {
             "/api/level/{level_id}/categories/{category_id}/questions",
             get(api::question::get),
         )
+        .route("/api/questions/{id}", get(api::question::get_by_id))
         .route("/api/evaluate/{vote}", get(api::evaluate::vote))
         .route("/api/signup", post(api::user::signup))
         .route("/api/signin", post(api::user::signin))
