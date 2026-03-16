@@ -265,10 +265,10 @@ pub async fn stats(
                         .map(|(name, (t, c))| {
                             let a = if *t > 0 { *c as f64 / *t as f64 } else { 0.0 };
                             json!({
-                                "name": name,
+                                "category_name": name,
                                 "total": t,
                                 "correct": c,
-                                "accuracy": a,
+                                "accuracy": a * 100.0,
                             })
                         })
                         .collect();
@@ -277,7 +277,7 @@ pub async fn stats(
                         "level_name": level_name,
                         "total": stats.total,
                         "correct": stats.correct,
-                        "accuracy": cat_accuracy,
+                        "accuracy": cat_accuracy * 100.0,
                         "categories": categories,
                     })
                 })
@@ -287,9 +287,9 @@ pub async fn stats(
                 StatusCode::OK,
                 "success".to_string(),
                 Some(json!({
-                    "total_answered": total_answered,
+                    "total_answers": total_answered,
                     "total_correct": total_correct,
-                    "accuracy": accuracy,
+                    "overall_accuracy": accuracy * 100.0,
                     "levels": levels_json,
                 })),
                 None,
