@@ -5,6 +5,7 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
+use axum_extra::extract::cookie::{Cookie, CookieJar, SameSite};
 
 use log::error;
 use serde::Deserialize;
@@ -13,7 +14,7 @@ use uuid::Uuid;
 
 use crate::{
     api::utils::response_handler,
-    models::claim::{hash_password, verify_password},
+    models::claim::{hash_password, verify_password, Claims},
 };
 
 /// ダミーハッシュ: ユーザー未存在時のタイミング攻撃防止用
@@ -46,6 +47,25 @@ fn is_valid_email(email: &str) -> bool {
         }
         _ => false,
     }
+}
+
+/// httpOnly Cookie を構築する
+fn build_auth_cookie(token: &str) -> Cookie<'static> {
+    let is_production = std::env::var("FRONTEND_URL")
+        .map(|u| u.starts_with("https://"))
+        .unwrap_or(false);
+
+    let mut cookie = Cookie::build(("access_token", token.to_string()))
+        .http_only(true)
+        .same_site(SameSite::None)
+        .path("/api")
+        .max_age(time::Duration::hours(24));
+
+    if is_production {
+        cookie = cookie.secure(true);
+    }
+
+    cookie.build()
 }
 
 pub async fn signup(
@@ -110,17 +130,20 @@ pub async fn signup(
 
 pub async fn signin(
     State(db): State<Arc<crate::common::database::Database>>,
+    jar: CookieJar,
     Json(req): Json<SigninRequest>,
 ) -> impl IntoResponse {
     // メールアドレスバリデーション
     if !is_valid_email(&req.email) {
-        // ダミーハッシュ比較でタイミングを均一化
         let _ = verify_password(&DUMMY_HASH, &req.password);
-        return response_handler(
-            StatusCode::UNAUTHORIZED,
-            "error".to_string(),
-            None,
-            Some(AUTH_ERROR_MSG.to_string()),
+        return (
+            jar,
+            response_handler(
+                StatusCode::UNAUTHORIZED,
+                "error".to_string(),
+                None,
+                Some(AUTH_ERROR_MSG.to_string()),
+            ),
         );
     }
 
@@ -131,13 +154,15 @@ pub async fn signin(
     {
         Ok(user) => user,
         Err(_) => {
-            // ダミーハッシュ比較でタイミングを均一化
             let _ = verify_password(&DUMMY_HASH, &req.password);
-            return response_handler(
-                StatusCode::UNAUTHORIZED,
-                "error".to_string(),
-                None,
-                Some(AUTH_ERROR_MSG.to_string()),
+            return (
+                jar,
+                response_handler(
+                    StatusCode::UNAUTHORIZED,
+                    "error".to_string(),
+                    None,
+                    Some(AUTH_ERROR_MSG.to_string()),
+                ),
             );
         }
     };
@@ -145,13 +170,15 @@ pub async fn signin(
     let db_user = match db_user {
         Some(user) => user,
         None => {
-            // ダミーハッシュ比較でタイミングを均一化
             let _ = verify_password(&DUMMY_HASH, &req.password);
-            return response_handler(
-                StatusCode::UNAUTHORIZED,
-                "error".to_string(),
-                None,
-                Some(AUTH_ERROR_MSG.to_string()),
+            return (
+                jar,
+                response_handler(
+                    StatusCode::UNAUTHORIZED,
+                    "error".to_string(),
+                    None,
+                    Some(AUTH_ERROR_MSG.to_string()),
+                ),
             );
         }
     };
@@ -160,20 +187,26 @@ pub async fn signin(
     match verify_password(&db_user.password, &req.password) {
         Ok(true) => {}
         Ok(false) => {
-            return response_handler(
-                StatusCode::UNAUTHORIZED,
-                "error".to_string(),
-                None,
-                Some(AUTH_ERROR_MSG.to_string()),
+            return (
+                jar,
+                response_handler(
+                    StatusCode::UNAUTHORIZED,
+                    "error".to_string(),
+                    None,
+                    Some(AUTH_ERROR_MSG.to_string()),
+                ),
             );
         }
         Err(e) => {
             error!("パスワード検証エラー: {}", e);
-            return response_handler(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error".to_string(),
-                None,
-                Some("認証処理に失敗しました".to_string()),
+            return (
+                jar,
+                response_handler(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error".to_string(),
+                    None,
+                    Some("認証処理に失敗しました".to_string()),
+                ),
             );
         }
     }
@@ -198,29 +231,66 @@ pub async fn signin(
     };
 
     // クレーム発行
-    let claims = crate::models::claim::Claims::new(user.user_id.clone(), user.email.clone(), role);
+    let claims = Claims::new(user.user_id.clone(), user.email.clone(), role);
 
     let to_token = match claims.to_token() {
         Ok(token) => token,
         Err(e) => {
             error!("token creation error: {:?}", e);
-            return response_handler(
-                StatusCode::INTERNAL_SERVER_ERROR,
-                "error".to_string(),
-                None,
-                Some("認証処理に失敗しました".to_string()),
+            return (
+                jar,
+                response_handler(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "error".to_string(),
+                    None,
+                    Some("認証処理に失敗しました".to_string()),
+                ),
             );
         }
     };
 
+    // httpOnly Cookie を設定
+    let cookie = build_auth_cookie(&to_token);
+    let jar = jar.add(cookie);
+
+    (
+        jar,
+        response_handler(
+            StatusCode::OK,
+            "success".to_string(),
+            Some(json!({
+                "user": json!(user),
+            })),
+            None,
+        ),
+    )
+}
+
+/// GET /api/auth/me — 認証状態を確認
+pub async fn auth_me(claims: Claims) -> impl IntoResponse {
     response_handler(
         StatusCode::OK,
         "success".to_string(),
         Some(json!({
-            "token": to_token,
-            "token_type": "bearer",
-            "user": json!(user),
+            "user_id": claims.user_id,
+            "email": claims.email,
+            "role": claims.role,
         })),
         None,
+    )
+}
+
+/// POST /api/auth/logout — Cookie クリア
+pub async fn auth_logout(jar: CookieJar) -> impl IntoResponse {
+    let cookie = Cookie::build(("access_token", ""))
+        .http_only(true)
+        .same_site(SameSite::None)
+        .path("/api")
+        .max_age(time::Duration::seconds(0))
+        .build();
+    let jar = jar.add(cookie);
+    (
+        jar,
+        response_handler(StatusCode::OK, "success".to_string(), None, None),
     )
 }

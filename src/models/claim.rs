@@ -114,23 +114,25 @@ fn validate_jwt(token: &str) -> Result<Claims, jsonwebtoken::errors::Error> {
     Ok(token_data.claims)
 }
 
-// Axum Extract
+// Axum Extract — Cookie優先、Authorization ヘッダーフォールバック
 impl<S> FromRequestParts<S> for Claims
 where
     S: Send + Sync,
 {
     type Rejection = AuthError;
     async fn from_request_parts(parts: &mut Parts, _state: &S) -> Result<Self, Self::Rejection> {
-        // Extract the token from the authorization header
+        // 1. Cookie から access_token を取得（優先）
+        let jar = parts.extract::<axum_extra::extract::CookieJar>().await.unwrap();
+        if let Some(cookie) = jar.get("access_token") {
+            return validate_jwt(cookie.value()).map_err(|_| AuthError::InvalidToken);
+        }
+
+        // 2. Authorization ヘッダーからBearerトークンを取得（フォールバック）
         let TypedHeader(Authorization(bearer)) = parts
             .extract::<TypedHeader<Authorization<Bearer>>>()
             .await
             .map_err(|_| AuthError::InvalidToken)?;
-        // Decode the user data
-        match validate_jwt(bearer.token()) {
-            Ok(claims) => Ok(claims),
-            Err(_) => Err(AuthError::InvalidToken),
-        }
+        validate_jwt(bearer.token()).map_err(|_| AuthError::InvalidToken)
     }
 }
 

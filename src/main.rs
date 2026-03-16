@@ -74,6 +74,8 @@ async fn main() {
             get(api::question::get),
         )
         .route("/api/questions/{id}", get(api::question::get_by_id))
+        .route("/api/auth/me", get(api::user::auth_me))
+        .route("/api/auth/logout", post(api::user::auth_logout))
         .route("/api/answers", post(api::answers::record_answer))
         .route("/api/users/me/history", get(api::answers::history))
         .route("/api/users/me/stats", get(api::answers::stats))
@@ -122,7 +124,8 @@ async fn main() {
                 .allow_headers([
                     "Content-Type".parse().unwrap(),
                     "Authorization".parse().unwrap(),
-                ]),
+                ])
+                .allow_credentials(true),
         )
         .with_state(db);
 
