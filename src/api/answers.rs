@@ -154,15 +154,57 @@ pub async fn history(
         .await
     {
         Ok(mut stream) => {
-            let mut results = Vec::new();
+            let mut answers = Vec::new();
             while let Some(item) = stream.next().await {
                 match item {
-                    Ok(answer) => results.push(answer),
+                    Ok(answer) => answers.push(answer),
                     Err(e) => {
                         error!("Error reading user_answer: {:?}", e);
                     }
                 }
             }
+
+            // Batch-fetch questions to enrich history items
+            let unique_qids: Vec<String> = {
+                let mut seen = std::collections::HashSet::new();
+                answers.iter().filter_map(|a| {
+                    if seen.insert(a.question_id.clone()) {
+                        Some(a.question_id.clone())
+                    } else {
+                        None
+                    }
+                }).collect()
+            };
+
+            let mut q_map: std::collections::HashMap<String, Question> = std::collections::HashMap::new();
+            for qid in &unique_qids {
+                if let Ok(Some(q)) = db.read::<Question>("questions", qid).await {
+                    q_map.insert(qid.clone(), q);
+                }
+            }
+
+            let results: Vec<serde_json::Value> = answers.iter().map(|a| {
+                let level_name = format!("N{}", a.level_id);
+                let sentence = q_map.get(&a.question_id)
+                    .map(|q| q.sentence.clone())
+                    .unwrap_or_default();
+                let created_at = chrono::DateTime::from_timestamp(a.answered_at, 0)
+                    .map(|dt| dt.to_rfc3339())
+                    .unwrap_or_default();
+                json!({
+                    "id": a.id,
+                    "question_id": a.question_id,
+                    "sub_question_id": a.sub_question_id,
+                    "selected_answer": a.selected_answer,
+                    "correct_answer": a.correct_answer,
+                    "is_correct": a.is_correct,
+                    "level_name": level_name,
+                    "category_name": a.category_name,
+                    "sentence": sentence,
+                    "created_at": created_at,
+                })
+            }).collect();
+
             response_handler(
                 StatusCode::OK,
                 "success".to_string(),
