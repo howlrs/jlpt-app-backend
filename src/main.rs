@@ -6,7 +6,9 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
+use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor};
 use tower_http::cors::CorsLayer;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 mod api;
 mod common;
@@ -32,6 +34,37 @@ async fn main() {
 
     let db = Arc::new(common::database::Database::new().await);
 
+    // レート制限設定: 認証エンドポイント用 (5回/秒バースト, 2秒に1回持続)
+    let auth_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
+            .per_second(2)
+            .burst_size(5)
+            .finish()
+            .expect("Failed to build auth rate limiter config"),
+    );
+
+    // レート制限設定: evaluate用 (10回/秒バースト)
+    let evaluate_governor_conf = Arc::new(
+        GovernorConfigBuilder::default()
+            .key_extractor(SmartIpKeyExtractor)
+            .per_second(1)
+            .burst_size(10)
+            .finish()
+            .expect("Failed to build evaluate rate limiter config"),
+    );
+
+    // 認証エンドポイント（レート制限付き）
+    let auth_routes = Router::new()
+        .route("/api/signup", post(api::user::signup))
+        .route("/api/signin", post(api::user::signin))
+        .layer(GovernorLayer::new(auth_governor_conf));
+
+    // evaluateエンドポイント（レート制限付き）
+    let evaluate_routes = Router::new()
+        .route("/api/evaluate/{vote}", get(api::evaluate::vote))
+        .layer(GovernorLayer::new(evaluate_governor_conf));
+
     let endpoint = Router::new()
         .route("/api/public/health", get(api::initial::public_health))
         .route("/api/private/health", get(api::initial::private_health))
@@ -41,9 +74,6 @@ async fn main() {
             get(api::question::get),
         )
         .route("/api/questions/{id}", get(api::question::get_by_id))
-        .route("/api/evaluate/{vote}", get(api::evaluate::vote))
-        .route("/api/signup", post(api::user::signup))
-        .route("/api/signin", post(api::user::signin))
         .route("/api/answers", post(api::answers::record_answer))
         .route("/api/users/me/history", get(api::answers::history))
         .route("/api/users/me/stats", get(api::answers::stats))
@@ -64,6 +94,21 @@ async fn main() {
             "/api/admin/monitor-quality",
             post(api::monitor::monitor_quality),
         )
+        .merge(auth_routes)
+        .merge(evaluate_routes)
+        // セキュリティヘッダー
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_FRAME_OPTIONS,
+            axum::http::HeaderValue::from_static("DENY"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::X_CONTENT_TYPE_OPTIONS,
+            axum::http::HeaderValue::from_static("nosniff"),
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            axum::http::header::STRICT_TRANSPORT_SECURITY,
+            axum::http::HeaderValue::from_static("max-age=31536000; includeSubDomains"),
+        ))
         .layer(
             CorsLayer::new()
                 .allow_methods([

@@ -12,8 +12,24 @@ use serde_json::json;
 use crate::{api::utils::response_handler, models::evaluate::Vote};
 
 #[derive(Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum VoteType {
+    Good,
+    Bad,
+}
+
+impl std::fmt::Display for VoteType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            VoteType::Good => write!(f, "good"),
+            VoteType::Bad => write!(f, "bad"),
+        }
+    }
+}
+
+#[derive(Deserialize)]
 pub struct PathParams {
-    vote: String,
+    vote: VoteType,
 }
 
 #[derive(Deserialize)]
@@ -22,49 +38,6 @@ pub struct QueryParams {
     child_id: Option<String>,
 }
 
-/// # vote
-///
-/// ## 概要
-/// 問題に対する評価
-///
-/// ## HTTP情報
-/// - **メソッド**: GET
-/// - **パス**: /api/evaluate/{vote}
-/// - **認証**: 不要
-///
-/// ## パスパラメータ
-/// - `vote`: 評価 (String) good/bad - 評価を指定する
-///
-/// ## クエリ
-/// - `parent_id`: 対象 (String) - 問題のIDなど
-/// - `child_id`: 対象 (String) - 問題の子IDなど
-///
-/// ## レスポンス
-/// ### 成功時
-/// - **ステータスコード**: 200 OK
-/// - **形式**: JSON
-/// - **内容**:
-///   ```json
-///   {
-///     "status": "success",
-///     "message": "success",
-///     "data": {
-///      "vote": "good",
-///        "parent_id": "1",
-///       "child_id": "1"
-///    }
-///   }
-///   ```
-///
-/// ### エラー時
-/// - **ステータスコード**: 404 Not Found
-/// - **内容**: リソースが存在しない場合のエラーメッセージ
-///
-/// ## 例
-/// POST /api/evalute/good?parent_id=1&child_id=1
-///
-/// ## 関連エンドポイント
-/// - `get`: 評価取得エンドポイント
 pub async fn vote(
     Path(path_params): Path<PathParams>,
     Query(query_params): Query<QueryParams>,
@@ -73,13 +46,25 @@ pub async fn vote(
     let parent_id = query_params.parent_id.as_deref().unwrap_or_default();
     let child_id = query_params.child_id.as_deref().unwrap_or_default();
 
+    // parent_id, child_id の長さ制限
+    if parent_id.len() > 128 || child_id.len() > 128 {
+        return response_handler(
+            StatusCode::BAD_REQUEST,
+            "error".to_string(),
+            None,
+            Some("IDが長すぎます".to_string()),
+        );
+    }
+
+    let vote_str = path_params.vote.to_string();
+
     info!(
         "vote: {}, parent_id: {}, child_id: {}",
-        path_params.vote, parent_id, child_id
+        vote_str, parent_id, child_id
     );
 
     let vote = Vote::new(
-        path_params.vote.clone(),
+        vote_str.clone(),
         Some("questions".to_string()),
         parent_id.to_string(),
         child_id.to_string(),
@@ -99,7 +84,7 @@ pub async fn vote(
             StatusCode::OK,
             "success".to_string(),
             Some(json!({
-                "vote": &path_params.vote,
+                "vote": &vote_str,
                 "parent_id": parent_id,
                 "child_id": child_id,
             })),

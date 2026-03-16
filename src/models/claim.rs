@@ -22,7 +22,7 @@ use serde_json::json;
 // Axum examples/jwt 実装を踏襲
 // https://github.com/tokio-rs/axum/blob/main/examples/jwt/src/main.rs
 
-static JWT_SECRET: LazyLock<String> =
+pub static JWT_SECRET: LazyLock<String> =
     LazyLock::new(|| std::env::var("JWT_SECRET").expect("JWT_SECRET must be set"));
 
 static KEYS: LazyLock<Keys> = LazyLock::new(|| Keys::new(JWT_SECRET.as_bytes()));
@@ -60,11 +60,11 @@ pub struct Claims {
 
 impl Claims {
     pub fn new(user_id: String, email: String, role: Option<String>) -> Self {
-        let after72h = chrono::Utc::now().timestamp() + 60 * 60 * 72;
+        let after24h = chrono::Utc::now().timestamp() + 60 * 60 * 24;
         Self {
             user_id,
             email,
-            exp: after72h,
+            exp: after24h,
             role,
         }
     }

@@ -35,15 +35,14 @@ fn is_authorized(headers: &HeaderMap) -> bool {
     }
 
     // 2. JWT Bearer トークンによる認証（AdminClaims相当）
+    // claim.rs の JWT_SECRET を再利用（unwrap_or_default による空シークレットの脆弱性を修正）
     if let Some(auth_header) = headers.get("authorization") {
         if let Ok(val) = auth_header.to_str() {
             if let Some(token) = val.strip_prefix("Bearer ") {
                 if let Ok(token_data) = jsonwebtoken::decode::<crate::models::claim::Claims>(
                     token,
                     &jsonwebtoken::DecodingKey::from_secret(
-                        std::env::var("JWT_SECRET")
-                            .unwrap_or_default()
-                            .as_bytes(),
+                        crate::models::claim::JWT_SECRET.as_bytes(),
                     ),
                     &jsonwebtoken::Validation::default(),
                 ) {
