@@ -73,3 +73,5 @@ src/
 以下の複合インデックスが必要：
 
 - コレクション `questions`: `level_id` (ASC) + `category_id` (ASC)
+- コレクション `user_answers`: `user_id` (ASC) + `answered_at` (DESC) — 学習履歴取得用
+- コレクション `user_answers`: `user_id` (ASC) + `is_correct` (ASC) + `answered_at` (DESC) — 間違い一覧取得用
