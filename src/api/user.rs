@@ -57,7 +57,7 @@ fn build_auth_cookie(token: &str) -> Cookie<'static> {
 
     let mut cookie = Cookie::build(("access_token", token.to_string()))
         .http_only(true)
-        .same_site(SameSite::None)
+        .same_site(SameSite::Lax)
         .path("/api")
         .max_age(time::Duration::hours(24));
 
@@ -284,7 +284,7 @@ pub async fn auth_me(claims: Claims) -> impl IntoResponse {
 pub async fn auth_logout(jar: CookieJar) -> impl IntoResponse {
     let cookie = Cookie::build(("access_token", ""))
         .http_only(true)
-        .same_site(SameSite::None)
+        .same_site(SameSite::Lax)
         .path("/api")
         .max_age(time::Duration::seconds(0))
         .build();
