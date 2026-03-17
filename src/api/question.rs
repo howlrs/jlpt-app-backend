@@ -158,24 +158,32 @@ async fn read_db(
     path_params: &PathParams,
     db: Arc<crate::common::database::Database>,
 ) -> Vec<Question> {
+    let cat_id_str = path_params.category_id.to_string();
+
+    // 複合インデックス (level_id + category_id) を使用してFirestore側でフィルタ
     match db
         .client
         .fluent()
         .select()
         .from("questions")
         .filter(|x| {
-            x.field(path!(Question::level_name)).eq(format!("N{}", path_params.level_id))
+            x.for_all([
+                x.field(path!(Question::level_id)).eq(path_params.level_id),
+                x.field(path!(Question::category_id)).eq(&cat_id_str),
+            ])
         })
         .obj::<Question>()
         .query()
         .await
     {
         Ok(data) => {
-            let cat_filter = path_params.category_id.to_string();
-            info!("Firestore returned {} questions for N{}, filtering by category_id={}", data.len(), path_params.level_id, cat_filter);
-            data.into_iter()
-                .filter(|q| q.category_id.as_deref() == Some(cat_filter.as_str()))
-                .collect()
+            info!(
+                "Firestore returned {} questions for N{}/cat={}",
+                data.len(),
+                path_params.level_id,
+                cat_id_str
+            );
+            data
         }
         Err(e) => {
             log::error!("Question query error: {:?}", e);
