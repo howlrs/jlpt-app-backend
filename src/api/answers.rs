@@ -10,7 +10,6 @@ use log::error;
 use serde::{Deserialize, Serialize};
 use serde_json::json;
 use tokio_stream::StreamExt;
-use uuid::Uuid;
 
 use crate::{
     api::utils::response_handler,
@@ -156,10 +155,15 @@ pub async fn record_answer(
         }
     }
 
-    // 2) Save to user_answers only if incorrect
+    // 2) Save to user_answers only if incorrect (upsert: 同じ問題の重複を防止)
     if !is_correct {
+        // 決定的ID: user_id + question_id + sub_question_id で一意に特定
+        let doc_id = format!(
+            "{}_{}_{}", claims.user_id, body.question_id, body.sub_question_id
+        );
+
         let user_answer = UserAnswer {
-            id: Uuid::new_v4().to_string(),
+            id: doc_id.clone(),
             user_id: claims.user_id.clone(),
             question_id: body.question_id.clone(),
             sub_question_id: body.sub_question_id,
@@ -171,9 +175,11 @@ pub async fn record_answer(
             answered_at: chrono::Utc::now().timestamp(),
         };
 
-        let doc_id = user_answer.id.clone();
-        if let Err(e) = db.create::<UserAnswer>("user_answers", &doc_id, user_answer).await {
-            error!("Failed to save user_answer: {}", e);
+        // upsert: 既存なら上書き、なければ作成
+        if let Err(e) = db.update::<UserAnswer>("user_answers", &doc_id, user_answer.clone()).await {
+            if let Err(e2) = db.create::<UserAnswer>("user_answers", &doc_id, user_answer).await {
+                error!("Failed to save user_answer: {} / {}", e, e2);
+            }
         }
 
         // 3) Prune old answers if over limit
@@ -251,20 +257,25 @@ pub async fn history(
                 }
             }
 
-            let results: Vec<serde_json::Value> = answers.iter().map(|a| {
+            // question_id で重複除外（最新のみ保持）
+            let mut seen = std::collections::HashSet::new();
+            let results: Vec<serde_json::Value> = answers.iter().filter_map(|a| {
+                if !seen.insert(a.question_id.clone()) {
+                    return None;
+                }
                 let level_name = format!("N{}", a.level_id);
                 let level_slug = format!("n{}", a.level_id);
                 let created_at = chrono::DateTime::from_timestamp(a.answered_at, 0)
                     .map(|dt| dt.to_rfc3339())
                     .unwrap_or_default();
-                json!({
+                Some(json!({
                     "id": a.id,
                     "question_id": a.question_id,
                     "level_name": level_name,
                     "level_slug": level_slug,
                     "category_name": a.category_name,
                     "created_at": created_at,
-                })
+                }))
             }).collect();
 
             response_handler(
