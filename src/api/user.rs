@@ -231,7 +231,7 @@ pub async fn signin(
     };
 
     // クレーム発行
-    let claims = Claims::new(user.user_id.clone(), user.email.clone(), role);
+    let claims = Claims::new(user.user_id.clone(), user.email.clone(), role.clone());
 
     let to_token = match claims.to_token() {
         Ok(token) => token,
@@ -259,7 +259,9 @@ pub async fn signin(
             StatusCode::OK,
             "success".to_string(),
             Some(json!({
-                "user": json!(user),
+                "user_id": user.user_id,
+                "email": user.email,
+                "role": role,
             })),
             None,
         ),
