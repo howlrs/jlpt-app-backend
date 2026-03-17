@@ -31,17 +31,23 @@ impl User {
     pub fn merge_with(&mut self, user: User) -> User {
         if self.id.is_empty() {
             self.id = user.id;
-        } else if self.user_id.is_empty() {
+        }
+        if self.user_id.is_empty() {
             self.user_id = user.user_id;
-        } else if self.email.is_empty() {
+        }
+        if self.email.is_empty() {
             self.email = user.email;
-        } else if self.ip.is_none() {
+        }
+        if self.ip.is_none() {
             self.ip = user.ip;
-        } else if self.language.is_none() {
+        }
+        if self.language.is_none() {
             self.language = user.language;
-        } else if self.country.is_none() {
+        }
+        if self.country.is_none() {
             self.country = user.country;
-        } else if self.created_at.is_none() {
+        }
+        if self.created_at.is_none() {
             self.created_at = user.created_at;
         }
 
