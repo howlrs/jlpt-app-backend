@@ -230,8 +230,15 @@ pub async fn signin(
         }
     };
 
+    // user_id が空の場合は id をフォールバック（既存データ互換）
+    let effective_user_id = if user.user_id.is_empty() {
+        user.id.clone()
+    } else {
+        user.user_id.clone()
+    };
+
     // クレーム発行
-    let claims = Claims::new(user.user_id.clone(), user.email.clone(), role.clone());
+    let claims = Claims::new(effective_user_id.clone(), user.email.clone(), role.clone());
 
     let to_token = match claims.to_token() {
         Ok(token) => token,
@@ -259,7 +266,7 @@ pub async fn signin(
             StatusCode::OK,
             "success".to_string(),
             Some(json!({
-                "user_id": user.user_id,
+                "user_id": effective_user_id,
                 "email": user.email,
                 "role": role,
             })),
