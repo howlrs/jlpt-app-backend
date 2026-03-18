@@ -257,26 +257,50 @@ pub async fn history(
                 }
             }
 
-            // question_id で重複除外（最新のみ保持）
+            // question_id で重複除外（最新のみ保持）+ 削除済み問題の存在確認
             let mut seen = std::collections::HashSet::new();
-            let results: Vec<serde_json::Value> = answers.iter().filter_map(|a| {
+            let mut orphaned_ids = Vec::new();
+            let mut results = Vec::new();
+
+            for a in &answers {
                 if !seen.insert(a.question_id.clone()) {
-                    return None;
+                    continue;
                 }
-                let level_name = format!("N{}", a.level_id);
-                let level_slug = format!("n{}", a.level_id);
-                let created_at = chrono::DateTime::from_timestamp(a.answered_at, 0)
-                    .map(|dt| dt.to_rfc3339())
-                    .unwrap_or_default();
-                Some(json!({
-                    "id": a.id,
-                    "question_id": a.question_id,
-                    "level_name": level_name,
-                    "level_slug": level_slug,
-                    "category_name": a.category_name,
-                    "created_at": created_at,
-                }))
-            }).collect();
+                // 問題がまだ存在するか確認
+                match db.read::<Question>("questions", &a.question_id).await {
+                    Ok(Some(_)) => {
+                        let level_name = format!("N{}", a.level_id);
+                        let level_slug = format!("n{}", a.level_id);
+                        let created_at = chrono::DateTime::from_timestamp(a.answered_at, 0)
+                            .map(|dt| dt.to_rfc3339())
+                            .unwrap_or_default();
+                        results.push(json!({
+                            "id": a.id,
+                            "question_id": a.question_id,
+                            "level_name": level_name,
+                            "level_slug": level_slug,
+                            "category_name": a.category_name,
+                            "created_at": created_at,
+                        }));
+                    }
+                    _ => {
+                        // 削除済み問題 → 孤立レコードとして記録
+                        orphaned_ids.push(a.id.clone());
+                    }
+                }
+            }
+
+            // 孤立レコードをバックグラウンドで削除
+            if !orphaned_ids.is_empty() {
+                let db_clone = db.clone();
+                let count = orphaned_ids.len();
+                tokio::spawn(async move {
+                    for id in &orphaned_ids {
+                        let _ = db_clone.delete("user_answers", id).await;
+                    }
+                    log::info!("孤立user_answers {}件を削除", count);
+                });
+            }
 
             response_handler(
                 StatusCode::OK,

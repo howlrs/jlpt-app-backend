@@ -7,7 +7,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
-use log::error;
+use log::{error, info};
 use serde::Deserialize;
 use serde_json::json;
 use tokio_stream::StreamExt;
@@ -242,19 +242,50 @@ pub async fn question_detail(
 }
 
 /// DELETE /api/admin/questions/{id}
-/// 問題を削除する
+/// 問題を削除する（関連するuser_answersも連鎖削除）
 pub async fn delete_question(
     _admin: AdminClaims,
     Path(path): Path<QuestionPath>,
     State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
     match db.delete("questions", &path.id).await {
-        Ok(_) => response_handler(
-            StatusCode::OK,
-            "success".to_string(),
-            Some(json!({ "deleted": path.id })),
-            None,
-        ),
+        Ok(_) => {
+            // 関連するuser_answersを非同期で連鎖削除
+            let db_clone = db.clone();
+            let qid = path.id.clone();
+            tokio::spawn(async move {
+                use tokio_stream::StreamExt;
+                if let Ok(mut stream) = db_clone
+                    .client
+                    .fluent()
+                    .select()
+                    .from("user_answers")
+                    .filter(|q| {
+                        q.field(firestore::path!(super::answers::UserAnswer::question_id)).eq(qid.clone())
+                    })
+                    .obj::<super::answers::UserAnswer>()
+                    .stream_query_with_errors()
+                    .await
+                {
+                    let mut cleaned = 0usize;
+                    while let Some(Ok(answer)) = stream.next().await {
+                        if let Ok(_) = db_clone.delete("user_answers", &answer.id).await {
+                            cleaned += 1;
+                        }
+                    }
+                    if cleaned > 0 {
+                        info!("問題削除に伴い user_answers {}件を連鎖削除", cleaned);
+                    }
+                }
+            });
+
+            response_handler(
+                StatusCode::OK,
+                "success".to_string(),
+                Some(json!({ "deleted": path.id })),
+                None,
+            )
+        }
         Err(e) => {
             error!("Failed to delete question: {}", e);
             response_handler(
@@ -518,7 +549,7 @@ pub struct BulkDeleteRequest {
 }
 
 /// POST /api/admin/questions/bulk-delete
-/// 問題を一括削除する
+/// 問題を一括削除する（関連するuser_answersも連鎖削除）
 pub async fn bulk_delete(
     _admin: AdminClaims,
     State(db): State<Arc<crate::common::database::Database>>,
@@ -536,6 +567,37 @@ pub async fn bulk_delete(
             }
         }
     }
+
+    // 関連するuser_answersを非同期で連鎖削除
+    let db_clone = db.clone();
+    let question_ids = body.ids.clone();
+    tokio::spawn(async move {
+        use tokio_stream::StreamExt;
+        let mut cleaned = 0usize;
+        for qid in &question_ids {
+            if let Ok(mut stream) = db_clone
+                .client
+                .fluent()
+                .select()
+                .from("user_answers")
+                .filter(|q| {
+                    q.field(firestore::path!(super::answers::UserAnswer::question_id)).eq(qid.clone())
+                })
+                .obj::<super::answers::UserAnswer>()
+                .stream_query_with_errors()
+                .await
+            {
+                while let Some(Ok(answer)) = stream.next().await {
+                    if let Ok(_) = db_clone.delete("user_answers", &answer.id).await {
+                        cleaned += 1;
+                    }
+                }
+            }
+        }
+        if cleaned > 0 {
+            info!("問題削除に伴い user_answers {}件を連鎖削除", cleaned);
+        }
+    });
 
     response_handler(
         StatusCode::OK,
