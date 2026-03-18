@@ -56,16 +56,18 @@ pub struct Claims {
     pub email: String,
     pub exp: i64,
     pub role: Option<String>,
+    pub jti: String,
 }
 
 impl Claims {
     pub fn new(user_id: String, email: String, role: Option<String>) -> Self {
-        let after24h = chrono::Utc::now().timestamp() + 60 * 60 * 24;
+        let after30min = chrono::Utc::now().timestamp() + 30 * 60;
         Self {
             user_id,
             email,
-            exp: after24h,
+            exp: after30min,
             role,
+            jti: uuid::Uuid::new_v4().to_string(),
         }
     }
 
