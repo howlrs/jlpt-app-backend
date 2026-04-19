@@ -25,5 +25,6 @@ tokio-stream = "0.1.17"
 tower = "0.5"
 tower_governor = "0.8"
 tower-http = { version = "0.6.2", features = ["cors", "set-header"] }
+unicode-normalization = "0.1"
 unicode-script = "0.5.7"
 uuid = { version = "1.15.1", features = ["v4", "v7"] }

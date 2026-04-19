@@ -101,6 +101,7 @@ async fn main() {
             post(api::report::report_question),
         )
         .route("/api/admin/reports", get(api::report::list_reports))
+        .route("/api/admin/duplicates", get(api::admin::duplicates))
         .merge(auth_routes)
         .merge(evaluate_routes)
         // セキュリティヘッダー

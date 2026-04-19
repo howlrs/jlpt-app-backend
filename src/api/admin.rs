@@ -12,6 +12,8 @@ use serde::Deserialize;
 use serde_json::json;
 use tokio_stream::StreamExt;
 
+use crate::common::dedup::{dedup_key, KeySkipReason, SubLike};
+
 use crate::{
     api::utils::response_handler,
     models::{
@@ -605,6 +607,98 @@ pub async fn bulk_delete(
         Some(json!({
             "deleted": deleted,
             "failed": failed,
+        })),
+        None,
+    )
+}
+
+/// GET /api/admin/duplicates
+/// 全問題の重複グループ数・削除可能sub数・skipカウントを返す
+pub async fn duplicates(
+    _admin: AdminClaims,
+    State(db): State<Arc<crate::common::database::Database>>,
+) -> impl IntoResponse {
+    let questions: Vec<Question> = match db.read_all::<Question>("questions", None).await {
+        Ok(qs) => qs,
+        Err(e) => {
+            error!("Failed to fetch questions: {}", e);
+            return response_handler(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error".to_string(),
+                None,
+                Some(e),
+            );
+        }
+    };
+
+    let total_parents = questions.len();
+    let total_sub_questions: usize = questions.iter().map(|q| q.sub_questions.len()).sum();
+
+    // dedup キーごとの出現数を数える
+    let mut key_counts: HashMap<String, usize> = HashMap::new();
+    let mut skipped_numeric_placeholder: usize = 0;
+    let mut skipped_answer_not_in_options: usize = 0;
+
+    for q in &questions {
+        for sub in &q.sub_questions {
+            let sub_like = SubLike {
+                options: sub
+                    .select_answer
+                    .iter()
+                    .map(|sa| (sa.key.clone(), sa.value.clone()))
+                    .collect(),
+                answer: sub.answer.clone(),
+            };
+
+            match dedup_key(q.level_id, &sub_like) {
+                Ok(key) => {
+                    *key_counts.entry(key).or_insert(0) += 1;
+                }
+                Err(KeySkipReason::NumericPlaceholder) => {
+                    skipped_numeric_placeholder += 1;
+                }
+                Err(KeySkipReason::AnswerNotInOptions) => {
+                    skipped_answer_not_in_options += 1;
+                }
+            }
+        }
+    }
+
+    // 重複グループ (count >= 2) を集計
+    let mut dup_keys: Vec<(String, usize)> = key_counts
+        .into_iter()
+        .filter(|(_, count)| *count >= 2)
+        .collect();
+
+    // count 降順にソート
+    dup_keys.sort_by(|a, b| b.1.cmp(&a.1));
+
+    let dedup_groups = dup_keys.len();
+    let removable_subs: usize = dup_keys.iter().map(|(_, count)| count - 1).sum();
+
+    // top 10 グループ
+    let top_groups: Vec<serde_json::Value> = dup_keys
+        .iter()
+        .take(10)
+        .map(|(key, count)| {
+            json!({
+                "key": key,
+                "count": count,
+            })
+        })
+        .collect();
+
+    response_handler(
+        StatusCode::OK,
+        "success".to_string(),
+        Some(json!({
+            "total_parents": total_parents,
+            "total_sub_questions": total_sub_questions,
+            "dedup_groups": dedup_groups,
+            "removable_subs": removable_subs,
+            "skipped_numeric_placeholder": skipped_numeric_placeholder,
+            "skipped_answer_not_in_options": skipped_answer_not_in_options,
+            "top_groups": top_groups,
         })),
         None,
     )
