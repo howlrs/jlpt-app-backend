@@ -5,5 +5,6 @@ pub mod initial;
 pub mod meta;
 pub mod monitor;
 pub mod question;
+pub mod report;
 pub mod user;
 pub mod utils;

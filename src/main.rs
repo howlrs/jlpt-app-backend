@@ -96,6 +96,11 @@ async fn main() {
             "/api/admin/monitor-quality",
             post(api::monitor::monitor_quality),
         )
+        .route(
+            "/api/questions/{id}/report",
+            post(api::report::report_question),
+        )
+        .route("/api/admin/reports", get(api::report::list_reports))
         .merge(auth_routes)
         .merge(evaluate_routes)
         // セキュリティヘッダー
