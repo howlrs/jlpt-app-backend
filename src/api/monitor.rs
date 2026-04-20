@@ -10,6 +10,7 @@ use tokio_stream::StreamExt;
 
 use crate::{
     api::utils::response_handler,
+    common::dedup::{dedup_key, KeySkipReason, SubLike},
     common::similarity::{normalized_similarity, DEFAULT_SIMILARITY_THRESHOLD},
     models::question::Question,
 };
@@ -108,6 +109,8 @@ pub async fn monitor_quality(
     let mut total_exact = 0usize;
     let mut total_similar = 0usize;
     let mut total_malformed = 0usize;
+    let mut total_skipped_numeric = 0usize;
+    let mut total_skipped_no_answer = 0usize;
 
     for level_id in &target_levels {
         // DB全問題取得
@@ -141,8 +144,8 @@ pub async fn monitor_quality(
         let level_q_count = questions.len();
         total_questions += level_q_count;
 
-        // カテゴリ別グルーピング
-        let mut category_groups: HashMap<String, Vec<(String, String, String)>> = HashMap::new();
+        // カテゴリ別グルーピング (similar 検出用、カテゴリ内の sentence 比較)
+        let mut category_groups: HashMap<String, Vec<(String, String)>> = HashMap::new();
         let mut category_names: HashMap<String, String> = HashMap::new();
         let mut level_sub_count = 0usize;
         let mut answer_dist = [0usize; 4];
@@ -168,18 +171,12 @@ pub async fn monitor_quality(
                     .unwrap_or("")
                     .trim()
                     .to_string();
-                let correct_value = sub_q
-                    .select_answer
-                    .iter()
-                    .find(|sa| sa.key == sub_q.answer)
-                    .map(|sa| sa.value.trim().to_string())
-                    .unwrap_or_default();
 
                 if !sentence.is_empty() {
                     category_groups
                         .entry(cat_id.clone())
                         .or_default()
-                        .push((q.id.clone(), sentence, correct_value));
+                        .push((q.id.clone(), sentence));
                 }
             }
         }
@@ -252,69 +249,104 @@ pub async fn monitor_quality(
 
         total_malformed += malformed_details.len();
 
-        // カテゴリ内で重複検出
-        let mut duplicate_details = Vec::new();
+        // ─────────────────────────────────────────────────────────────
+        // exact 重複検出: common::dedup::dedup_key (NFKC正規化 + 選択肢セット+正解 完全一致)
+        // レベル単位・全カテゴリ横断。delete 対象。
+        // ─────────────────────────────────────────────────────────────
+        let mut exact_details = Vec::new();
         let mut delete_ids: HashSet<String> = HashSet::new();
-        // 品質異常のIDも削除対象に追加
         delete_ids.extend(malformed_ids);
 
-        for (_cat_id, items) in &category_groups {
-            let mut seen: Vec<(usize, String)> = Vec::new();
+        let mut skipped_numeric = 0usize;
+        let mut skipped_no_answer = 0usize;
 
-            for (idx, (doc_id, sentence, correct_value)) in items.iter().enumerate() {
-                let dedup_key = format!("{}||{}", sentence, correct_value);
+        // dedup_key -> (parent_id, sub_idx, sentence) の最初に出現したレコードを記録
+        let mut seen_keys: HashMap<String, (String, u32, String)> = HashMap::new();
 
-                // 完全一致チェック
-                if let Some((orig_idx, _)) = seen.iter().find(|(_, key)| key == &dedup_key) {
-                    duplicate_details.push(json!({
-                        "type": "exact",
-                        "similarity": "100%",
-                        "question_id_a": items[*orig_idx].0,
-                        "question_id_b": doc_id,
-                        "sentence_a": items[*orig_idx].1,
-                        "sentence_b": sentence,
-                    }));
-                    delete_ids.insert(doc_id.clone());
-                    continue;
-                }
+        for q in &questions {
+            for sub_q in &q.sub_questions {
+                let sub_like = SubLike {
+                    options: sub_q
+                        .select_answer
+                        .iter()
+                        .map(|sa| (sa.key.clone(), sa.value.clone()))
+                        .collect(),
+                    answer: sub_q.answer.clone(),
+                };
 
-                // 文字列長フィルタ + Levenshtein類似度チェック
-                let s_len = sentence.chars().count();
-                let similar = seen.iter().find(|(oi, _)| {
-                    let orig_s = &items[*oi].1;
-                    let o_len = orig_s.chars().count();
-                    let ratio =
-                        s_len.min(o_len) as f64 / s_len.max(o_len).max(1) as f64;
-                    if ratio < 0.8 {
-                        return false;
+                match dedup_key(*level_id, &sub_like) {
+                    Ok(key) => {
+                        let sentence = sub_q.sentence.as_deref().unwrap_or("").trim().to_string();
+                        if let Some((orig_id, orig_sub_idx, orig_sentence)) = seen_keys.get(&key) {
+                            exact_details.push(json!({
+                                "type": "exact",
+                                "dedup_key": key,
+                                "question_id_a": orig_id,
+                                "sub_id_a": orig_sub_idx,
+                                "sentence_a": orig_sentence,
+                                "question_id_b": q.id,
+                                "sub_id_b": sub_q.id,
+                                "sentence_b": sentence,
+                            }));
+                            delete_ids.insert(q.id.clone());
+                        } else {
+                            seen_keys.insert(key, (q.id.clone(), sub_q.id, sentence));
+                        }
                     }
-                    normalized_similarity(sentence, orig_s) >= threshold
-                });
-
-                if let Some((orig_idx, _)) = similar {
-                    let sim = normalized_similarity(sentence, &items[*orig_idx].1);
-                    duplicate_details.push(json!({
-                        "type": "similar",
-                        "similarity": format!("{:.0}%", sim * 100.0),
-                        "question_id_a": items[*orig_idx].0,
-                        "question_id_b": doc_id,
-                        "sentence_a": items[*orig_idx].1,
-                        "sentence_b": sentence,
-                    }));
-                    delete_ids.insert(doc_id.clone());
-                    continue;
+                    Err(KeySkipReason::NumericPlaceholder) => {
+                        skipped_numeric += 1;
+                    }
+                    Err(KeySkipReason::AnswerNotInOptions) => {
+                        skipped_no_answer += 1;
+                    }
                 }
-
-                seen.push((idx, dedup_key));
             }
         }
 
-        let exact_count = duplicate_details
-            .iter()
-            .filter(|d| d.get("type").and_then(|v| v.as_str()) == Some("exact"))
-            .count();
-        let similar_count = duplicate_details.len() - exact_count;
+        let exact_count = exact_details.len();
         total_exact += exact_count;
+        total_skipped_numeric += skipped_numeric;
+        total_skipped_no_answer += skipped_no_answer;
+
+        // ─────────────────────────────────────────────────────────────
+        // similar 検出 (警告のみ・削除しない): カテゴリ内 Levenshtein ≥ threshold
+        // ─────────────────────────────────────────────────────────────
+        let mut similar_details = Vec::new();
+
+        for (_cat_id, items) in &category_groups {
+            let mut seen: Vec<usize> = Vec::new();
+
+            for (idx, (doc_id, sentence)) in items.iter().enumerate() {
+                let s_len = sentence.chars().count();
+                let similar_hit = seen.iter().find(|&&oi| {
+                    let orig_s = &items[oi].1;
+                    let o_len = orig_s.chars().count();
+                    let ratio = s_len.min(o_len) as f64 / s_len.max(o_len).max(1) as f64;
+                    if ratio < 0.8 {
+                        return false;
+                    }
+                    let sim = normalized_similarity(sentence, orig_s);
+                    sim >= threshold && sim < 1.0
+                });
+
+                if let Some(&orig_idx) = similar_hit {
+                    let sim = normalized_similarity(sentence, &items[orig_idx].1);
+                    similar_details.push(json!({
+                        "type": "similar",
+                        "similarity": format!("{:.0}%", sim * 100.0),
+                        "question_id_a": items[orig_idx].0,
+                        "question_id_b": doc_id,
+                        "sentence_a": items[orig_idx].1,
+                        "sentence_b": sentence,
+                    }));
+                    // delete_ids には追加しない (警告のみ)
+                }
+
+                seen.push(idx);
+            }
+        }
+
+        let similar_count = similar_details.len();
         total_similar += similar_count;
 
         // 正解分布
@@ -352,13 +384,15 @@ pub async fn monitor_quality(
             "level": format!("N{}", level_id),
             "questions": level_q_count,
             "sub_questions": level_sub_count,
-            "duplicates": duplicate_details.len(),
             "duplicates_exact": exact_count,
             "duplicates_similar": similar_count,
             "malformed": malformed_details.len(),
+            "skipped_numeric_placeholder": skipped_numeric,
+            "skipped_answer_not_in_options": skipped_no_answer,
             "answer_distribution": dist,
             "categories": categories,
-            "duplicate_details": duplicate_details,
+            "exact_details": exact_details,
+            "similar_details": similar_details,
             "malformed_details": malformed_details,
         }));
     }
@@ -386,23 +420,32 @@ pub async fn monitor_quality(
         info!("{}件削除完了", deleted_count);
     }
 
-    let total_duplicates = total_exact + total_similar;
     info!(
-        "品質監視完了: questions={}, sub_questions={}, duplicates={} (exact={}, similar={}), malformed={}, deleted={}",
-        total_questions, total_sub_questions, total_duplicates, total_exact, total_similar, total_malformed, deleted_count
+        "品質監視完了: questions={}, sub_questions={}, exact={}, similar={} (warn-only), malformed={}, skipped(numeric={}, no_answer={}), deleted={}",
+        total_questions,
+        total_sub_questions,
+        total_exact,
+        total_similar,
+        total_malformed,
+        total_skipped_numeric,
+        total_skipped_no_answer,
+        deleted_count
     );
 
     let response_data = json!({
         "summary": {
             "total_questions": total_questions,
             "total_sub_questions": total_sub_questions,
-            "duplicates_found": total_duplicates,
             "duplicates_exact": total_exact,
             "duplicates_similar": total_similar,
             "malformed": total_malformed,
+            "skipped_numeric_placeholder": total_skipped_numeric,
+            "skipped_answer_not_in_options": total_skipped_no_answer,
             "delete_targets": unique_delete.len(),
             "deleted": deleted_count,
             "executed": execute,
+            "dedup_logic": "common::dedup (NFKC + sorted options + answer)",
+            "similar_policy": "warning only (not deleted)",
         },
         "levels": level_reports,
     });
@@ -431,10 +474,11 @@ async fn notify_discord(data: &serde_json::Value) {
     let summary = &data["summary"];
     let total_q = summary["total_questions"].as_u64().unwrap_or(0);
     let total_sub = summary["total_sub_questions"].as_u64().unwrap_or(0);
-    let dups = summary["duplicates_found"].as_u64().unwrap_or(0);
     let exact = summary["duplicates_exact"].as_u64().unwrap_or(0);
     let similar = summary["duplicates_similar"].as_u64().unwrap_or(0);
     let malformed = summary["malformed"].as_u64().unwrap_or(0);
+    let skipped_numeric = summary["skipped_numeric_placeholder"].as_u64().unwrap_or(0);
+    let skipped_no_answer = summary["skipped_answer_not_in_options"].as_u64().unwrap_or(0);
     let deleted = summary["deleted"].as_u64().unwrap_or(0);
     let executed = summary["executed"].as_bool().unwrap_or(false);
 
@@ -445,7 +489,8 @@ async fn notify_discord(data: &serde_json::Value) {
             let name = lv["level"].as_str().unwrap_or("?");
             let q = lv["questions"].as_u64().unwrap_or(0);
             let sub = lv["sub_questions"].as_u64().unwrap_or(0);
-            let dup = lv["duplicates"].as_u64().unwrap_or(0);
+            let ex = lv["duplicates_exact"].as_u64().unwrap_or(0);
+            let si = lv["duplicates_similar"].as_u64().unwrap_or(0);
             let mal = lv["malformed"].as_u64().unwrap_or(0);
             let dist = &lv["answer_distribution"];
             let d1 = dist["1"].as_str().unwrap_or("-");
@@ -453,20 +498,37 @@ async fn notify_discord(data: &serde_json::Value) {
             let d3 = dist["3"].as_str().unwrap_or("-");
             let d4 = dist["4"].as_str().unwrap_or("-");
             level_lines.push(format!(
-                "**{}** : {}問 (sub:{}) | 重複:{} 不良:{} | 正解: {}/{}/{}/{}",
-                name, q, sub, dup, mal, d1, d2, d3, d4
+                "**{}** : {}問 (sub:{}) | 完全一致:{} 類似:{} 不良:{} | 正解: {}/{}/{}/{}",
+                name, q, sub, ex, si, mal, d1, d2, d3, d4
             ));
         }
     }
 
-    let total_issues = dups + malformed;
-    let status_emoji = if total_issues == 0 { "✅" } else if deleted > 0 { "🔧" } else { "⚠️" };
+    // 削除対象は exact + malformed のみ。similar は警告扱い。
+    let deletable_issues = exact + malformed;
+    let status_emoji = if deletable_issues == 0 && similar == 0 {
+        "✅"
+    } else if deleted > 0 {
+        "🔧"
+    } else if similar > 0 && deletable_issues == 0 {
+        "👀" // similar warning only
+    } else {
+        "⚠️"
+    };
+    let color = if deletable_issues == 0 && similar == 0 {
+        3066993 // 緑
+    } else if deletable_issues > 0 {
+        15844367 // 黄
+    } else {
+        3447003 // 青 (warning only)
+    };
     let now = chrono::Utc::now().format("%Y-%m-%d %H:%M UTC");
 
     let embed = json!({
         "embeds": [{
             "title": format!("{} JLPT品質監視レポート", status_emoji),
-            "color": if dups == 0 { 3066993 } else { 15844367 },
+            "description": "判定ロジック: `common::dedup` (NFKC正規化 + 選択肢セット+正解 完全一致) — 類似は警告のみで削除対象外",
+            "color": color,
             "fields": [
                 {
                     "name": "総問題数",
@@ -474,13 +536,18 @@ async fn notify_discord(data: &serde_json::Value) {
                     "inline": true
                 },
                 {
-                    "name": "重複検出",
-                    "value": format!("{}件 (完全一致:{}, 類似:{})", dups, exact, similar),
+                    "name": "重複(完全一致)",
+                    "value": format!("{}件 [削除対象]", exact),
+                    "inline": true
+                },
+                {
+                    "name": "類似(警告のみ)",
+                    "value": format!("{}件 [削除しない]", similar),
                     "inline": true
                 },
                 {
                     "name": "品質異常",
-                    "value": format!("{}件 (空括弧・選択肢異常等)", malformed),
+                    "value": format!("{}件 [削除対象]", malformed),
                     "inline": true
                 },
                 {
@@ -490,6 +557,11 @@ async fn notify_discord(data: &serde_json::Value) {
                     } else {
                         "未実行 (DRY RUN)".to_string()
                     },
+                    "inline": true
+                },
+                {
+                    "name": "スキップ(dedup対象外)",
+                    "value": format!("並び替え:{} / 正解キー不在:{}", skipped_numeric, skipped_no_answer),
                     "inline": true
                 },
                 {
