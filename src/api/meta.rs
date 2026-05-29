@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{collections::HashMap, env, sync::Arc};
 
 use axum::{extract::State, http::StatusCode, response::IntoResponse};
 use serde::{Deserialize, Serialize};
@@ -7,6 +7,7 @@ use serde_json::json;
 use crate::{
     api::utils::{self, response_handler},
     models::meta::{CatValue, Meta, Value},
+    models::question::Question,
 };
 
 /// # get
@@ -71,6 +72,16 @@ pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> im
         );
     }
 
+    let counts = active_question_counts(db.clone()).await;
+    for category in categories.iter_mut() {
+        category.reten = Some(
+            counts
+                .get(&(category.level_id, category.id.to_string()))
+                .copied()
+                .unwrap_or(0),
+        );
+    }
+
     // sort by name length
     categories.sort_by_key(|category| utils::kanji_len(&category.name));
 
@@ -82,6 +93,50 @@ pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> im
         Some(json!(meta)),
         None,
     )
+}
+
+async fn active_question_counts(
+    db: Arc<crate::common::database::Database>,
+) -> HashMap<(u32, String), u32> {
+    let active_dataset = env::var("QUESTION_DATASET")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    let questions = match db.read_all::<Question>("questions", None).await {
+        Ok(questions) => questions,
+        Err(e) => {
+            log::error!("Failed to read questions for meta counts: {}", e);
+            return HashMap::new();
+        }
+    };
+
+    let mut counts = HashMap::new();
+    for question in questions {
+        if !is_active_for_dataset(&question, active_dataset.as_deref()) {
+            continue;
+        }
+        let Some(category_id) = question.category_id else {
+            continue;
+        };
+        *counts.entry((question.level_id, category_id)).or_insert(0) += 1;
+    }
+
+    counts
+}
+
+fn is_active_for_dataset(question: &Question, active_dataset: Option<&str>) -> bool {
+    let quality_ok = !matches!(
+        question.quality_status.as_deref(),
+        Some("quarantine" | "needs_human_review")
+    );
+    let dataset_ok = match active_dataset {
+        Some("legacy") => question.dataset.as_deref().unwrap_or("legacy") == "legacy",
+        Some(dataset) => question.dataset.as_deref() == Some(dataset),
+        None => question.dataset.as_deref().unwrap_or("legacy") == "legacy",
+    };
+
+    quality_ok && dataset_ok
 }
 
 #[derive(Debug, Serialize, Deserialize)]
