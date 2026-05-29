@@ -17,6 +17,7 @@
 | `FRONTEND_URL` | No | CORS許可オリジン | `https://jlpt.howlrs.net` |
 | `PORT` | No | サーバーポート | 8080 |
 | `ADMIN_EMAILS` | No | 管理者メールアドレス（カンマ区切り） | - |
+| `QUESTION_DATASET` | No | 配信する問題データセット。`new_level_20260529` などを指定するとその dataset のみ配信。未設定または `legacy` で現行問題に戻す | `legacy` |
 
 > **注意:** サインアップは全てのユーザーに開放されています。`ADMIN_EMAILS` は管理者ロールの制御のみに使用されます。
 

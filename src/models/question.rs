@@ -22,6 +22,10 @@ pub struct Question {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_by: Option<String>,
 
+    /// 配信対象を安全に切り替えるためのデータセット名
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub dataset: Option<String>,
+
     /// 品質監査で隔離・人手確認になった問題を出題対象から外すための状態
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quality_status: Option<String>,
@@ -53,6 +57,8 @@ impl<'de> Deserialize<'de> for Question {
             #[serde(default)]
             generated_by: Option<String>,
             #[serde(default)]
+            dataset: Option<String>,
+            #[serde(default)]
             quality_status: Option<String>,
         }
 
@@ -81,6 +87,7 @@ impl<'de> Deserialize<'de> for Question {
             prerequisites: helper.prerequisites,
             sub_questions: helper.sub_questions,
             generated_by: helper.generated_by,
+            dataset: helper.dataset,
             quality_status: helper.quality_status,
         })
     }

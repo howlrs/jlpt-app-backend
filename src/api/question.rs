@@ -1,4 +1,4 @@
-use std::sync::Arc;
+use std::{env, sync::Arc};
 
 use axum::{
     extract::{Path, Query, State},
@@ -157,6 +157,10 @@ async fn read_db(
     db: Arc<crate::common::database::Database>,
 ) -> Vec<Question> {
     let cat_id_str = path_params.category_id.to_string();
+    let active_dataset = env::var("QUESTION_DATASET")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
 
     // 複合インデックス (level_id + category_id) を使用してFirestore側でフィルタ
     match db
@@ -178,17 +182,24 @@ async fn read_db(
             let active: Vec<Question> = data
                 .into_iter()
                 .filter(|q| {
-                    !matches!(
+                    let quality_ok = !matches!(
                         q.quality_status.as_deref(),
                         Some("quarantine" | "needs_human_review")
-                    )
+                    );
+                    let dataset_ok = match active_dataset.as_deref() {
+                        Some("legacy") => q.dataset.as_deref().unwrap_or("legacy") == "legacy",
+                        Some(dataset) => q.dataset.as_deref() == Some(dataset),
+                        None => q.dataset.as_deref().unwrap_or("legacy") == "legacy",
+                    };
+                    quality_ok && dataset_ok
                 })
                 .collect();
             info!(
-                "Firestore returned {} active questions for N{}/cat={}",
+                "Firestore returned {} active questions for N{}/cat={} dataset={}",
                 active.len(),
                 path_params.level_id,
-                cat_id_str
+                cat_id_str,
+                active_dataset.as_deref().unwrap_or("legacy")
             );
             active
         }
