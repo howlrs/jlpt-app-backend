@@ -5,12 +5,10 @@ use axum::{
     http::StatusCode,
     response::IntoResponse,
 };
-use firestore::{FirestoreQueryDirection, path};
+use firestore::path;
 use log::info;
 use serde::Deserialize;
 use serde_json::json;
-
-use tokio_stream::StreamExt;
 
 use crate::{api::utils::response_handler, models::question::Question};
 
@@ -177,13 +175,22 @@ async fn read_db(
         .await
     {
         Ok(data) => {
+            let active: Vec<Question> = data
+                .into_iter()
+                .filter(|q| {
+                    !matches!(
+                        q.quality_status.as_deref(),
+                        Some("quarantine" | "needs_human_review")
+                    )
+                })
+                .collect();
             info!(
-                "Firestore returned {} questions for N{}/cat={}",
-                data.len(),
+                "Firestore returned {} active questions for N{}/cat={}",
+                active.len(),
                 path_params.level_id,
                 cat_id_str
             );
-            data
+            active
         }
         Err(e) => {
             log::error!("Question query error: {:?}", e);
@@ -191,4 +198,3 @@ async fn read_db(
         }
     }
 }
-

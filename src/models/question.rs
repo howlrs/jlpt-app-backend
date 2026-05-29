@@ -21,6 +21,10 @@ pub struct Question {
     /// 生成に使用したAIモデル名（品質追跡用）
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub generated_by: Option<String>,
+
+    /// 品質監査で隔離・人手確認になった問題を出題対象から外すための状態
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quality_status: Option<String>,
 }
 
 // QuestionのDeserializeトレイトの実装を拡張
@@ -48,6 +52,8 @@ impl<'de> Deserialize<'de> for Question {
             sub_questions: Vec<SubQuestion>,
             #[serde(default)]
             generated_by: Option<String>,
+            #[serde(default)]
+            quality_status: Option<String>,
         }
 
         #[derive(Deserialize)]
@@ -75,6 +81,7 @@ impl<'de> Deserialize<'de> for Question {
             prerequisites: helper.prerequisites,
             sub_questions: helper.sub_questions,
             generated_by: helper.generated_by,
+            quality_status: helper.quality_status,
         })
     }
 }
