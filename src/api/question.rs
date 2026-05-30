@@ -19,6 +19,11 @@ pub struct PathParams {
 }
 
 #[derive(Deserialize)]
+pub struct LevelPathParams {
+    level_id: u32,
+}
+
+#[derive(Deserialize)]
 pub struct QueryParams {
     limit: Option<u32>,
 }
@@ -125,18 +130,61 @@ pub async fn get(
     )
 }
 
+/// GET /api/level/{level_id}/questions
+pub async fn get_by_level(
+    Path(path_params): Path<LevelPathParams>,
+    Query(query_params): Query<QueryParams>,
+    State(db): State<Arc<crate::common::database::Database>>,
+) -> impl IntoResponse {
+    info!(
+        "level_id: {}, limit: {}",
+        path_params.level_id,
+        query_params.limit.unwrap_or_default()
+    );
+
+    let mut questions = read_level_db(&path_params, db.clone()).await;
+    if questions.is_empty() {
+        return response_handler(
+            StatusCode::NOT_FOUND,
+            "Not Found".to_string(),
+            None,
+            Some(format!(
+                "database has not questions, level_id: {}",
+                path_params.level_id
+            )),
+        );
+    }
+
+    use rand::seq::SliceRandom;
+    let mut rng = rand::rng();
+    questions.shuffle(&mut rng);
+
+    let questions = match query_params.limit {
+        Some(limit) => questions.into_iter().take(limit as usize).collect(),
+        None => questions,
+    };
+
+    info!(
+        "level_id: {} -> random result count: {}",
+        path_params.level_id,
+        questions.len()
+    );
+
+    response_handler(
+        StatusCode::OK,
+        "ok".to_string(),
+        Some(json!(questions)),
+        None,
+    )
+}
+
 /// GET /api/questions/{id}
 pub async fn get_by_id(
     Path(id): Path<String>,
     State(db): State<Arc<crate::common::database::Database>>,
 ) -> impl IntoResponse {
     match db.read::<Question>("questions", &id).await {
-        Ok(Some(q)) => response_handler(
-            StatusCode::OK,
-            "ok".to_string(),
-            Some(json!(q)),
-            None,
-        ),
+        Ok(Some(q)) => response_handler(StatusCode::OK, "ok".to_string(), Some(json!(q)), None),
         Ok(None) => response_handler(
             StatusCode::NOT_FOUND,
             "Not Found".to_string(),
@@ -150,6 +198,19 @@ pub async fn get_by_id(
             Some(e),
         ),
     }
+}
+
+fn is_active_question(question: &Question, active_dataset: Option<&str>) -> bool {
+    let quality_ok = !matches!(
+        question.quality_status.as_deref(),
+        Some("quarantine" | "needs_human_review")
+    );
+    let dataset_ok = match active_dataset {
+        Some("legacy") => question.dataset.as_deref().unwrap_or("legacy") == "legacy",
+        Some(dataset) => question.dataset.as_deref() == Some(dataset),
+        None => question.dataset.as_deref().unwrap_or("legacy") == "legacy",
+    };
+    quality_ok && dataset_ok
 }
 
 async fn read_db(
@@ -181,18 +242,7 @@ async fn read_db(
         Ok(data) => {
             let active: Vec<Question> = data
                 .into_iter()
-                .filter(|q| {
-                    let quality_ok = !matches!(
-                        q.quality_status.as_deref(),
-                        Some("quarantine" | "needs_human_review")
-                    );
-                    let dataset_ok = match active_dataset.as_deref() {
-                        Some("legacy") => q.dataset.as_deref().unwrap_or("legacy") == "legacy",
-                        Some(dataset) => q.dataset.as_deref() == Some(dataset),
-                        None => q.dataset.as_deref().unwrap_or("legacy") == "legacy",
-                    };
-                    quality_ok && dataset_ok
-                })
+                .filter(|q| is_active_question(q, active_dataset.as_deref()))
                 .collect();
             info!(
                 "Firestore returned {} active questions for N{}/cat={} dataset={}",
@@ -205,6 +255,45 @@ async fn read_db(
         }
         Err(e) => {
             log::error!("Question query error: {:?}", e);
+            vec![]
+        }
+    }
+}
+
+async fn read_level_db(
+    path_params: &LevelPathParams,
+    db: Arc<crate::common::database::Database>,
+) -> Vec<Question> {
+    let active_dataset = env::var("QUESTION_DATASET")
+        .ok()
+        .map(|s| s.trim().to_string())
+        .filter(|s| !s.is_empty());
+
+    match db
+        .client
+        .fluent()
+        .select()
+        .from("questions")
+        .filter(|q| q.field(path!(Question::level_id)).eq(path_params.level_id))
+        .obj::<Question>()
+        .query()
+        .await
+    {
+        Ok(data) => {
+            let active: Vec<Question> = data
+                .into_iter()
+                .filter(|q| is_active_question(q, active_dataset.as_deref()))
+                .collect();
+            info!(
+                "Firestore returned {} active questions for N{} dataset={}",
+                active.len(),
+                path_params.level_id,
+                active_dataset.as_deref().unwrap_or("legacy")
+            );
+            active
+        }
+        Err(e) => {
+            log::error!("Level question query error: {:?}", e);
             vec![]
         }
     }

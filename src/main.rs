@@ -6,7 +6,9 @@ use axum::{
     routing::{get, post},
 };
 use log::{error, info};
-use tower_governor::{GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor};
+use tower_governor::{
+    GovernorLayer, governor::GovernorConfigBuilder, key_extractor::SmartIpKeyExtractor,
+};
 use tower_http::cors::CorsLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 
@@ -69,6 +71,10 @@ async fn main() {
         .route("/api/public/health", get(api::initial::public_health))
         .route("/api/private/health", get(api::initial::private_health))
         .route("/api/meta", get(api::meta::get))
+        .route(
+            "/api/level/{level_id}/questions",
+            get(api::question::get_by_level),
+        )
         .route(
             "/api/level/{level_id}/categories/{category_id}/questions",
             get(api::question::get),
