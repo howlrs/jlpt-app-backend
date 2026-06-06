@@ -35,6 +35,7 @@ async fn main() {
     })];
 
     let db = Arc::new(common::database::Database::new().await);
+    let state = common::state::AppState::new(db);
 
     // レート制限設定: 認証エンドポイント用 (5回/秒バースト, 2秒に1回持続)
     let auth_governor_conf = Arc::new(
@@ -139,7 +140,7 @@ async fn main() {
                 ])
                 .allow_credentials(true),
         )
-        .with_state(db);
+        .with_state(state);
 
     let port = std::env::var("PORT").unwrap_or("8080".to_string());
     info!("サーバー起動: 0.0.0.0:{}", port);

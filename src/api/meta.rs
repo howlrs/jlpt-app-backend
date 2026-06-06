@@ -6,6 +6,7 @@ use serde_json::json;
 
 use crate::{
     api::utils::{self, response_handler},
+    common::state::AppState,
     models::meta::{CatValue, Meta, Value},
     models::question::Question,
 };
@@ -49,21 +50,24 @@ use crate::{
 ///
 /// ## 関連エンドポイント
 /// - `create`: カテゴリ作成エンドポイント
-pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> impl IntoResponse {
-    let mut levels = db
-        .read_all::<Value>("levels", None)
+pub async fn get(State(state): State<AppState>) -> impl IntoResponse {
+    let meta = match state
+        .meta_cache
+        .get_or_try_init(|| build_meta(state.db.clone()))
         .await
-        .unwrap_or_default();
+    {
+        Ok(meta) => meta.clone(),
+        Err(e) => {
+            return response_handler(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "error".to_string(),
+                None,
+                Some(e),
+            );
+        }
+    };
 
-    // sort by id
-    levels.sort_by_key(|level| level.id);
-
-    let mut categories = db
-        .read_all::<CatValue>("categories", None)
-        .await
-        .unwrap_or_default();
-
-    if categories.is_empty() || levels.is_empty() {
+    if meta.categories.is_empty() || meta.levels.is_empty() {
         return response_handler(
             StatusCode::NOT_FOUND,
             "error".to_string(),
@@ -71,6 +75,28 @@ pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> im
             Some("meta data not found".to_string()),
         );
     }
+
+    response_handler(
+        StatusCode::OK,
+        "success".to_string(),
+        Some(json!(meta)),
+        None,
+    )
+}
+
+async fn build_meta(db: Arc<crate::common::database::Database>) -> Result<Meta, String> {
+    let mut levels = db
+        .read_all::<Value>("levels", None)
+        .await
+        .map_err(|e| format!("failed to read levels: {e}"))?;
+
+    // sort by id
+    levels.sort_by_key(|level| level.id);
+
+    let mut categories = db
+        .read_all::<CatValue>("categories", None)
+        .await
+        .map_err(|e| format!("failed to read categories: {e}"))?;
 
     let counts = active_question_counts(db.clone()).await;
     for category in categories.iter_mut() {
@@ -85,14 +111,7 @@ pub async fn get(State(db): State<Arc<crate::common::database::Database>>) -> im
     // sort by name length
     categories.sort_by_key(|category| utils::kanji_len(&category.name));
 
-    let meta = Meta { levels, categories };
-
-    response_handler(
-        StatusCode::OK,
-        "success".to_string(),
-        Some(json!(meta)),
-        None,
-    )
+    Ok(Meta { levels, categories })
 }
 
 async fn active_question_counts(
